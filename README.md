@@ -8,7 +8,8 @@ an order** — there is no trade endpoint anywhere in the codebase.
 - **HTF bias:** 4H market structure (BOS / CHoCH) plus unmitigated order blocks and FVGs
 - **Entries:** 30m confirmation scorer — 3 of 6 checks required
 - **Scanning:** every 30m candle close, round the clock, no session filter
-- **Gating:** a hard 1:2 R:R floor on TP1, then a learned filter from your own backtest
+- **Gating:** a hard 1:2 R:R floor on TP1, then a filter the bot learns and keeps re-learning
+- **Growth:** it tracks every setup's outcome and narrows its alerts as evidence accumulates
 - **Delivery:** Telegram, de-duplicated per POI/setup
 - **Logging:** every fired alert stored in MongoDB with an outcome placeholder for win-rate review
 
@@ -17,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 240 unit tests, no network or database needed
+npm test                 # 276 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -46,10 +47,15 @@ Set `DRY_RUN=1` to format and log alerts without sending them to Telegram.
                     │
                     └─► entry / stop / TP ladder ─► TP1 R:R ≥ 1:2 ?
                                 │
-                                └─► edge profile ─► de-dup ─► Telegram ─► MongoDB
-                                    (did setups
-                                     like this
-                                     actually pay?)
+                                └─► de-dup ─► edge profile ─┬─► Telegram ─► MongoDB
+                                              (did setups   │
+                                               like this    └─► shadow log (tracked,
+                                               actually pay?)    never sent)
+                                                     ▲
+                                                     │ re-learned as outcomes resolve
+                                              ┌──────┴──────┐
+                                              │  the ledger │ backtest seed + live results
+                                              └─────────────┘
 ```
 
 The first three gates ask whether a setup is *structurally* valid. The edge profile asks a
@@ -118,6 +124,70 @@ An alert is suppressed when a recent one matches the same instrument + direction
 same POI id, or an entry within 25% of the stop distance. Entries expire after `DEDUP_TTL_MINUTES`
 (4h by default) and the window is re-seeded from MongoDB on restart, so a restart does not replay
 alerts that already went out.
+
+## How it learns and narrows
+
+The bot starts by alerting everything that clears the structural gates. As outcomes accumulate it
+works out which setups actually paid, and alerts shrink to match. On planted-signal data the curve
+looks like this — same generator throughout, only the sample size growing:
+
+```
+trades  budget  used  rule                      alerts kept  expectancy
+50      0       0     (none)                          100%      +0.32R
+100     1       1     pattern:double_bottom            40%      +1.40R
+400     4       1     pattern:double_bottom            42%      +1.19R
+800     4       1     pattern:double_bottom            41%      +1.11R
+```
+
+Note it used **one** rule out of a budget of four. More budget does not mean more rules — only more
+permission to use one if the evidence is there.
+
+### The three parts
+
+**1. Features — what it can learn about.** Every setup carries a vector of tokens: chart patterns
+on both timeframes (`pattern:double_bottom`, `htf_pattern:head_shoulders`, `pattern:engulfing_bull`,
+pin bars, inside bars, compression, higher lows) and context (`session:london`, `vol:high`,
+`hour:08-12`, `dow:tue`, `shift:choch`, `poi:fvg`, `sweep:eql`, `rr:2.5-3.5`, `stop:tight`,
+`bias:strong`, `kind:jump`). Roughly 70 distinct tokens appear across a typical run.
+
+These are **candidates, not signals**. Nothing in `src/features/` decides anything — the learner
+works out from outcomes whether a token carries any edge, and most do not. Adding a new detector
+there is all it takes to put a new hypothesis in front of the learner.
+
+**2. Outcomes — what it learns from.** Every logged setup is replayed against the candles that
+follow it, using the same simulator as the backtest, and resolved to an R multiple. A trade that is
+still running stays `pending` rather than being guessed at.
+
+**3. Shadow logging — how it keeps learning after it narrows.** A setup the profile holds back is
+still recorded and still resolved; it is simply never sent. Without this the bot would only ever
+observe outcomes for trades it already believed in, the filter could never discover it was wrong to
+exclude something, and learning would freeze the moment alerts narrowed. Observe everything, alert
+little.
+
+### Why it does not invent patterns
+
+Searching ~70 features at once means roughly 3–4 of them will look significant at p&lt;0.05 by pure
+chance. Four defences:
+
+| Guard | What it stops |
+| --- | --- |
+| **Benjamini-Hochberg FDR control** across every feature tested in a run | the multiple-comparisons problem — uncorrected, noise alone produces "patterns" every run |
+| **An earned rule budget**: one feature rule per 100 resolved trades, capped at 4 | narrowing hard on thin evidence |
+| **Positive lower bounds**, never point estimates | a 70% win rate on 10 trades, whose Wilson bound is 40% |
+| **A chronological holdout** the rules are never fitted to | rules that only work on their own training data |
+
+`tests/harness.test.js` runs the whole feature search over a **random walk** and asserts the rule
+set comes back empty. A trending walk is then checked to confirm the guards are not simply blind.
+
+### Watching it grow
+
+```bash
+npm run backtest      # seed the ledger and write the first profile
+npm start             # from here it resolves outcomes and re-learns on its own
+```
+
+The bot re-learns every `LEARN_RELEARN_EVERY` (default 25) new resolved outcomes and logs when the
+rules change. `EDGE_PROFILE_REQUIRED=1` keeps it silent until a validated profile exists.
 
 ## Backtesting and the edge profile
 
@@ -243,6 +313,8 @@ src/
   data/        Deriv WebSocket + OANDA REST connectors, candle aggregation
   alerts/      Telegram client, alert formatting, de-duplication
   db/          MongoDB models and logging
+  features/    chart-pattern and context extraction — the learner's candidate hypotheses
+  learn/       the learner, outcome tracking, trade ledger, growth loop
   backtest/    trade simulator, walk-forward replay, statistics, profile selection
   evaluate.js  the single decision path shared by the live scanner and the backtest
   scanner.js   the per-instrument pipeline

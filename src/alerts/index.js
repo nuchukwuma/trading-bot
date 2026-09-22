@@ -51,6 +51,20 @@ class AlertService {
     return { sent: true, message };
   }
 
+  /**
+   * Explicit de-duplication, for callers that need to decide BEFORE delivery
+   * whether a setup is new — the scanner checks this before the edge gate, so
+   * a held-back setup is shadow-logged exactly once rather than on every close.
+   */
+  isDuplicate(fingerprint, now = Date.now()) {
+    return this.dedup.findDuplicate(fingerprint, now) !== null;
+  }
+
+  /** Mark a fingerprint as seen without sending anything. */
+  reserve(fingerprint, now = Date.now()) {
+    return this.dedup.record(fingerprint, now);
+  }
+
   /** Re-seed the dedup window after a restart from previously logged alerts. */
   seedFrom(records = []) {
     this.dedup.seed(

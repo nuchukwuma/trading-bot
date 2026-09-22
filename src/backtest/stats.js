@@ -123,4 +123,83 @@ function bucketBy(trades, keyFn) {
     .sort((a, b) => b.expectancyLower - a.expectancyLower);
 }
 
-module.exports = { summarize, bucketBy, wilsonLowerBound, maxDrawdown, mean, stdev, Z_95 };
+/**
+ * Abramowitz & Stegun 7.1.26 error function, good to ~1e-7 — ample for the
+ * p-values used here.
+ */
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+      t *
+      Math.exp(-ax * ax);
+  return sign * y;
+}
+
+const normalCdf = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
+
+/**
+ * Welch's t-test comparing the mean R of two groups (unequal variance).
+ * The p-value uses a normal approximation, which is fine at the sample sizes
+ * the learner insists on (30+ per group) and conservative below them.
+ */
+function welchTest(a, b) {
+  const n1 = a.length;
+  const n2 = b.length;
+  if (n1 < 2 || n2 < 2) return { t: 0, p: 1, diff: 0, n1, n2 };
+
+  const m1 = mean(a);
+  const m2 = mean(b);
+  const v1 = stdev(a) ** 2 / n1;
+  const v2 = stdev(b) ** 2 / n2;
+  const se = Math.sqrt(v1 + v2);
+  if (!(se > 0)) return { t: 0, p: 1, diff: m1 - m2, n1, n2 };
+
+  const t = (m1 - m2) / se;
+  const p = 2 * (1 - normalCdf(Math.abs(t)));
+  return { t, p: Math.min(1, Math.max(0, p)), diff: m1 - m2, n1, n2 };
+}
+
+/**
+ * Benjamini-Hochberg false discovery rate control.
+ *
+ * The learner tests dozens of candidate features at once. Without this, at
+ * p < 0.05 roughly one in twenty worthless features looks significant purely
+ * by chance — and with 70+ tokens that guarantees a handful of invented
+ * "patterns" every run.
+ *
+ * @param {Array<number>} pValues
+ * @param {number} q  tolerated false discovery rate
+ * @returns {Array<boolean>} which hypotheses survive, in the input order
+ */
+function benjaminiHochberg(pValues, q = 0.1) {
+  const m = pValues.length;
+  if (m === 0) return [];
+
+  const indexed = pValues.map((p, i) => ({ p, i })).sort((a, b) => a.p - b.p);
+  let cutoffRank = -1;
+  for (let k = 0; k < m; k += 1) {
+    if (indexed[k].p <= ((k + 1) / m) * q) cutoffRank = k;
+  }
+
+  const rejected = new Array(m).fill(false);
+  for (let k = 0; k <= cutoffRank; k += 1) rejected[indexed[k].i] = true;
+  return rejected;
+}
+
+module.exports = {
+  summarize,
+  bucketBy,
+  wilsonLowerBound,
+  maxDrawdown,
+  mean,
+  stdev,
+  erf,
+  normalCdf,
+  welchTest,
+  benjaminiHochberg,
+  Z_95,
+};

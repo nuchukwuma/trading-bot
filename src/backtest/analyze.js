@@ -53,6 +53,14 @@ function matchesRules(trade, rules) {
   for (const id of rules.requiredConfirmations || []) {
     if (!trade.confirmations.includes(id)) return false;
   }
+  // Learned chart-pattern and context features.
+  const features = trade.features || [];
+  for (const f of rules.requiredFeatures || []) {
+    if (!features.includes(f)) return false;
+  }
+  for (const f of rules.excludedFeatures || []) {
+    if (features.includes(f)) return false;
+  }
   return true;
 }
 

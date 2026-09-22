@@ -2,6 +2,7 @@
 
 const config = require('./config');
 const { Scanner } = require('./scanner');
+const { LearningService } = require('./learn');
 const db = require('./db');
 const { createLogger } = require('./util/logger');
 const { msUntilNextBoundary, formatUtc } = require('./util/time');
@@ -36,6 +37,20 @@ async function main() {
   }
 
   const scanner = new Scanner();
+  if (config.learn.enabled && config.db.enabled) {
+    scanner.learning = new LearningService({
+      onProfileChange: (result) =>
+        log.warn(
+          `the alert filter has changed — now ${result.growth.featureRulesUsed} feature rule(s) ` +
+            `on ${result.growth.trades} resolved trades`
+        ),
+    });
+    log.info(
+      `learning on: outcomes resolved each scan, re-learning every ${config.learn.relearnEvery} new results`
+    );
+  } else if (config.learn.enabled) {
+    log.warn('learning needs MongoDB — outcomes cannot be tracked with DB_ENABLED=0');
+  }
   log.info(`edge profile: ${scanner.edgeProfile.describe()}`);
   if (!scanner.edgeProfile.active) {
     log.warn(

@@ -73,8 +73,19 @@ const AlertSchema = new mongoose.Schema(
     },
 
     poiId: { type: String, index: true },
+    poiKind: String,
     dedupKey: { type: String, index: true },
     delivered: { type: Boolean, default: false },
+
+    // Chart-pattern and context tokens the learner searches over.
+    features: { type: [String], index: true },
+
+    // A shadow record is a setup that cleared every structural gate but was
+    // held back by the learned profile. It is never sent, but it IS tracked and
+    // learned from — otherwise the bot would only ever see outcomes for trades
+    // it already believed in, and learning would freeze the moment it narrows.
+    shadow: { type: Boolean, default: false, index: true },
+    edgeProfileReason: String,
 
     // Filled in later for win-rate review. Never written by the scanner.
     outcome: {
@@ -89,6 +100,11 @@ const AlertSchema = new mongoose.Schema(
       rMultiple: Number,
       closedAt: Date,
       notes: String,
+      // 'simulator' when the bot resolved it from candles, 'manual' otherwise.
+      resolvedBy: String,
+      barsHeld: Number,
+      mfe: Number,
+      mae: Number,
     },
   },
   { timestamps: true }
