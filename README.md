@@ -144,15 +144,24 @@ permission to use one if the evidence is there.
 
 ### The three parts
 
-**1. Features — what it can learn about.** Every setup carries a vector of tokens: chart patterns
-on both timeframes (`pattern:double_bottom`, `htf_pattern:head_shoulders`, `pattern:engulfing_bull`,
-pin bars, inside bars, compression, higher lows) and context (`session:london`, `vol:high`,
-`hour:08-12`, `dow:tue`, `shift:choch`, `poi:fvg`, `sweep:eql`, `rr:2.5-3.5`, `stop:tight`,
-`bias:strong`, `kind:jump`). Roughly 70 distinct tokens appear across a typical run.
+**1. Features — what it can learn about.** Every setup carries a vector of tokens in three families:
+
+| Family | Examples |
+| --- | --- |
+| `pattern:` / `htf_pattern:` | double top/bottom, head and shoulders, engulfing, pin bar, inside bar, compression, higher lows — on both timeframes |
+| `pa:` | break and retest (S-R flip), breaker block, inducement taken, inducement still resting |
+| context | `session:london`, `vol:high`, `hour:08-12`, `dow:tue`, `shift:choch`, `poi:fvg`, `sweep:eql`, `rr:2.5-3.5`, `stop:tight`, `bias:strong`, `kind:jump` |
+
+Roughly 70 distinct tokens appear across a typical run.
 
 These are **candidates, not signals**. Nothing in `src/features/` decides anything — the learner
 works out from outcomes whether a token carries any edge, and most do not. Adding a new detector
 there is all it takes to put a new hypothesis in front of the learner.
+
+A detector is only useful if it *discriminates*: one that fires on 90% of setups splits nothing and
+gets dropped as untestable. `pa:break_retest` originally fired on 88% of setups until the retest was
+constrained to recent price action; it now sits near 65%, with all four `pa:` tokens in a testable
+range.
 
 **2. Outcomes — what it learns from.** Every logged setup is replayed against the candles that
 follow it, using the same simulator as the backtest, and resolved to an R multiple. A trade that is
@@ -175,6 +184,7 @@ chance. Four defences:
 | **An earned rule budget**: one feature rule per 100 resolved trades, capped at 4 | narrowing hard on thin evidence |
 | **Positive lower bounds**, never point estimates | a 70% win rate on 10 trades, whose Wilson bound is 40% |
 | **A chronological holdout** the rules are never fitted to | rules that only work on their own training data |
+| **Screening on the full training set**, before any score rule narrows it | a starved pool — a score rule can cut the sample by 80%, leaving nothing testable and inviting rules built on a handful of trades |
 
 `tests/harness.test.js` runs the whole feature search over a **random walk** and asserts the rule
 set comes back empty. A trending walk is then checked to confirm the guards are not simply blind.

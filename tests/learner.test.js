@@ -442,3 +442,72 @@ test('service: live outcomes join the backtest seed in one ledger', async () => 
   assert.equal(run.summary.bySource.backtest, 200);
   assert.equal(run.summary.bySource.live, 40);
 });
+
+test('learner: a score rule does not starve the feature search', () => {
+  // Most trades score 3; only a fifth score 5. If features were screened
+  // AFTER the score rule narrows the pool, almost nothing would be testable —
+  // which is exactly the bug this guards against.
+  const rand = mulberry32(17);
+  const trades = Array.from({ length: 500 }, (_, i) => {
+    const highScore = rand() < 0.2;
+    const carries = rand() < 0.5;
+    const features = ['dir:bullish', 'instrument:X'];
+    if (carries) features.push('pa:break_retest');
+    for (const t of NOISE_TOKENS.slice(0, 6)) if (rand() < 0.3) features.push(t);
+    const win = rand() < (highScore ? 0.7 : 0.3);
+    return {
+      source: 'backtest',
+      instrumentId: 'X',
+      time: 1700000000 + i * 1800,
+      score: highScore ? 5 : 3,
+      confirmations: ['ltf_structure'],
+      features: [...new Set(features)].sort(),
+      direction: 'bullish',
+      biasStrength: 'moderate',
+      filled: true,
+      status: win ? 'tp1' : 'stopped',
+      rMultiple: win ? 2 : -1,
+    };
+  });
+
+  const result = learn(trades, { minSamples: 30 });
+  assert.ok(result.rules.minScore >= 4, 'the score rule was selected and narrowed the pool');
+
+  const tested = result.candidates.map((c) => c.feature);
+  assert.ok(
+    tested.includes('pa:break_retest'),
+    'a feature spread across the whole sample must still be screened, not lost to the score rule'
+  );
+  assert.ok(result.candidates.length >= 5, `only ${result.candidates.length} features were testable`);
+});
+
+test('learner: it says so when a score rule leaves too little to build on', () => {
+  const rand = mulberry32(23);
+  const trades = Array.from({ length: 300 }, (_, i) => {
+    const highScore = rand() < 0.12; // a very thin high-score cohort
+    const win = rand() < (highScore ? 0.8 : 0.28);
+    return {
+      source: 'backtest',
+      instrumentId: 'X',
+      time: 1700000000 + i * 1800,
+      score: highScore ? 6 : 3,
+      confirmations: ['ltf_structure'],
+      features: ['dir:bullish', 'pa:break_retest'],
+      direction: 'bullish',
+      biasStrength: 'moderate',
+      filled: true,
+      status: win ? 'tp1' : 'stopped',
+      rMultiple: win ? 2 : -1,
+    };
+  });
+
+  const result = learn(trades, { minSamples: 30, tradesPerRule: 100 });
+  if (result.rules.minScore) {
+    assert.match(
+      result.notes.join(' '),
+      /too few to add a feature rule|No feature|survive the score rule/,
+      'a starved pool is reported rather than quietly producing rules from nothing'
+    );
+  }
+  assert.ok(result.rules.requiredFeatures.length <= 1);
+});
