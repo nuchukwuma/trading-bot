@@ -2,10 +2,9 @@
 
 const config = require('./config');
 const { MarketDataService } = require('./data');
-const { computeBias } = require('./structure/bias');
-const { scoreSetup } = require('./scoring');
-const { buildTradePlan } = require('./tradeplan');
+const { evaluateSetup, buildSetupRecord } = require('./evaluate');
 const { AlertService } = require('./alerts');
+const { EdgeProfile } = require('./backtest/edgeProfile');
 const db = require('./db');
 const { createLogger } = require('./util/logger');
 const { formatAlertLine } = require('./alerts/format');
@@ -32,6 +31,12 @@ class Scanner {
     this.instruments = opts.instruments || config.instruments;
     this.opts = opts.engineOpts || {};
     this.persist = opts.persist !== undefined ? opts.persist : config.db.enabled;
+    this.edgeProfile =
+      opts.edgeProfile ||
+      EdgeProfile.load(config.edge.profilePath, {
+        required: config.edge.required,
+        enforceUnvalidated: config.edge.enforceUnvalidated,
+      });
   }
 
   async scanAll(now = Date.now()) {
@@ -67,79 +72,46 @@ class Scanner {
       ltfCount: config.timeframes.ltfCandles,
     });
 
-    if (!htf.length || !ltf.length) {
-      return { instrumentId: instrument.id, fired: false, stage: 'data', reason: 'No candles returned' };
-    }
-
-    // ---- 1. HTF bias ----
-    const bias = computeBias(htf, {
-      instrument,
-      timeframe: config.timeframes.htf,
-      structureOpts: engineOpts.structure,
-      poi: engineOpts.poi,
-    });
-    if (bias.direction === 'neutral') {
-      return { instrumentId: instrument.id, fired: false, stage: 'bias', reason: bias.reasons[0], bias };
-    }
-
-    // ---- 2. 30m confirmations ----
-    const scoring = scoreSetup({ instrument, bias, ltfCandles: ltf, opts: engineOpts });
-    if (!scoring.passed) {
+    const evaluation = evaluateSetup({ instrument, htf, ltf, engineOpts, rates });
+    if (!evaluation.ok) {
       return {
         instrumentId: instrument.id,
         fired: false,
-        stage: 'confirmations',
-        reason: `${scoring.score}/${scoring.total} confirmations, ${scoring.required} required`,
-        bias,
-        scoring,
+        stage: evaluation.stage,
+        reason: evaluation.reason,
+        bias: evaluation.bias,
+        scoring: evaluation.scoring,
+        plan: evaluation.plan,
       };
     }
+    const { bias, scoring, plan } = evaluation;
 
-    // ---- 3. Trade plan + hard R:R gate ----
-    const sweepCheck = scoring.confirmations.find((c) => c.id === 'liquidity_sweep');
-    const plan = buildTradePlan({
-      instrument,
+    // ---- 4. Learned edge profile ----
+    // The gates above say the setup is structurally valid. This says whether
+    // setups like it have actually paid, which is a different question.
+    const verdict = this.edgeProfile.evaluate({
+      instrumentId: instrument.id,
       direction: bias.direction,
-      entryPrice: scoring.entryPrice,
-      poi: scoring.entryPoi,
-      sweep: sweepCheck && sweepCheck.details ? sweepCheck.details.sweep : null,
-      swings: scoring.ltfStructure.swings,
-      candles: ltf,
-      // Only HTF zones count as overhead resistance. An opposing 30m POI is
-      // usually created BY the retrace into our entry, and price filling it on
-      // the way back out is the setup working, not an obstacle to it.
-      opposingPois: bias.pois || [],
-      rates,
-      opts: engineOpts.tradePlan,
+      score: scoring.score,
+      confirmations: scoring.fired.map((c) => c.id),
+      biasStrength: bias.strength,
     });
-
-    if (!plan.valid) {
+    if (!verdict.allow) {
+      log.debug(`${instrument.id} filtered by edge profile: ${verdict.reason}`);
       return {
         instrumentId: instrument.id,
         fired: false,
-        stage: `gate:${plan.gate}`,
-        reason: plan.reason,
+        stage: 'gate:edge',
+        reason: verdict.reason,
         bias,
         scoring,
         plan,
       };
     }
 
-    // ---- 4. Delivery + logging ----
-    const alert = {
-      instrument,
-      direction: bias.direction,
-      bias,
-      score: scoring.score,
-      required: scoring.required,
-      total: scoring.total,
-      confirmations: scoring.fired,
-      allConfirmations: scoring.confirmations,
-      plan,
-      price: scoring.price,
-      candleTime: ltf[ltf.length - 1].time,
-      poiId: scoring.entryPoi ? scoring.entryPoi.id : null,
-    };
+    // ---- 5. Delivery + logging ----
+    const alert = buildSetupRecord({ instrument, evaluation, ltf });
+    alert.edgeProfile = { matched: true, reason: verdict.reason, active: this.edgeProfile.active };
 
     const delivery = await this.alerts.deliver(alert, now);
 

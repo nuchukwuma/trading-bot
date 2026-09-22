@@ -328,3 +328,15 @@ test('service: seeding from persisted records suppresses a restart repeat', asyn
   ]);
   assert.equal((await service.deliver(sampleAlert())).skipped, 'duplicate');
 });
+
+test('format: an enforced edge profile is credited in the alert', () => {
+  const withProfile = sampleAlert({
+    edgeProfile: { matched: true, active: true, reason: 'Matches the backtested profile (score 4 >= 4)' },
+  });
+  assert.match(formatAlert(withProfile), /✔ Matches the backtested profile \(score 4 &gt;= 4\)/);
+
+  // Nothing is claimed when no profile is actually filtering.
+  const noProfile = sampleAlert({ edgeProfile: { matched: true, active: false, reason: 'No edge profile' } });
+  assert.equal(/backtested profile/.test(formatAlert(noProfile)), false);
+  assert.equal(/✔/.test(formatAlert(sampleAlert())), false);
+});

@@ -36,6 +36,13 @@ async function main() {
   }
 
   const scanner = new Scanner();
+  log.info(`edge profile: ${scanner.edgeProfile.describe()}`);
+  if (!scanner.edgeProfile.active) {
+    log.warn(
+      'alerts are NOT filtered by backtested performance — run "npm run backtest" to build a profile, ' +
+        'or set EDGE_PROFILE_REQUIRED=1 to stay silent until one exists'
+    );
+  }
 
   if (config.db.enabled) {
     try {

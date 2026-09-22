@@ -296,3 +296,16 @@ test('scorer: every fired confirmation carries a distinct one-line reason', () =
     assert.equal(reason.includes('\n'), false, 'reasons stay on one line');
   }
 });
+
+test('scorer: the declared check ids stay in step with the checks themselves', () => {
+  const { CHECK_IDS } = require('../src/scoring/checks');
+  const r = scoreSetup({
+    instrument: INSTRUMENT,
+    bias: { direction: 'bullish', pois: [] },
+    ltfCandles: bullishScenario(),
+    opts: { structure: STRUCT_OPTS },
+  });
+  assert.deepEqual(r.confirmations.map((c) => c.id), CHECK_IDS);
+  assert.equal(CHECK_IDS.length, r.total);
+  assert.equal(new Set(CHECK_IDS).size, CHECK_IDS.length, 'ids are unique');
+});

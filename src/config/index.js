@@ -145,6 +145,29 @@ const config = {
     },
   },
 
+  // ---------------- Learned edge profile ----------------
+  edge: {
+    // Written by `npm run backtest`, read by the scanner before alerting.
+    profilePath: process.env.EDGE_PROFILE_PATH || 'data/edge-profile.json',
+    // Refuse to alert at all until a validated profile exists.
+    required: bool(process.env.EDGE_PROFILE_REQUIRED, false),
+    // Enforce a profile that failed its out-of-sample check. Off by default:
+    // rules that only worked on the data they were fitted to are worse than
+    // no filter at all.
+    enforceUnvalidated: bool(process.env.EDGE_PROFILE_ENFORCE_UNVALIDATED, false),
+  },
+
+  // ---------------- Backtest ----------------
+  backtest: {
+    candles: num(process.env.BACKTEST_CANDLES, 5000),
+    warmupBars: num(process.env.BACKTEST_WARMUP_BARS, 120),
+    tailBars: num(process.env.BACKTEST_TAIL_BARS, 96),
+    maxBars: num(process.env.BACKTEST_MAX_BARS, 96),
+    minSamples: num(process.env.BACKTEST_MIN_SAMPLES, 30),
+    trainRatio: num(process.env.BACKTEST_TRAIN_RATIO, 0.7),
+    pessimistic: bool(process.env.BACKTEST_PESSIMISTIC, true),
+  },
+
   // ---------------- Persistence ----------------
   db: {
     uri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smc-alert-bot',

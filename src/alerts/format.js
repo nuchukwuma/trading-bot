@@ -89,6 +89,11 @@ function formatAlert(alert) {
     for (const w of warnings) lines.push(`• ${escapeHtml(w)}`);
   }
 
+  if (alert.edgeProfile && alert.edgeProfile.active) {
+    lines.push('');
+    lines.push(`<i>✔ ${escapeHtml(alert.edgeProfile.reason)}</i>`);
+  }
+
   lines.push('');
   lines.push(`<i>30m candle close ${escapeHtml(formatUtc(candleTime))}</i>`);
   lines.push('<i>Analysis only — this bot places no orders.</i>');

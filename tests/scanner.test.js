@@ -292,3 +292,81 @@ test('scanner: a Jump index runs the pipeline with its own thresholds', async ()
   assert.equal(sent.length, 1);
   assert.equal(sent[0].instrument.id, 'JUMP75');
 });
+
+// ---------------------------------------------------------------- edge gate
+const { EdgeProfile } = require('../src/backtest/edgeProfile');
+
+function profileWith(rules, validated = true) {
+  return new EdgeProfile({
+    version: 1,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    validated,
+    rules: {
+      minScore: null,
+      requiredConfirmations: [],
+      minBiasStrength: null,
+      disabledInstruments: [],
+      allowedDirections: null,
+      ...rules,
+    },
+  });
+}
+
+test('scanner: the edge profile blocks a setup that clears every structural gate', async () => {
+  const { scanner, sent, logged } = buildScanner({
+    // The fixture scores 6/6, so a minimum of 7 can never be met.
+    edgeProfile: profileWith({ minScore: 7 }),
+  });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.scoring.score, 6, 'the setup itself was valid');
+  assert.equal(result.plan.valid, true, 'and it cleared the R:R gate');
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'gate:edge');
+  assert.match(result.reason, /below the backtested minimum of 7/);
+  assert.equal(sent.length, 0, 'nothing was sent');
+  assert.equal(logged.length, 0, 'and nothing was logged');
+});
+
+test('scanner: a matching setup passes the edge profile and carries the reason', async () => {
+  const { scanner, sent } = buildScanner({
+    edgeProfile: profileWith({ minScore: 5, requiredConfirmations: ['liquidity_sweep'] }),
+  });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.fired, true);
+  assert.equal(sent[0].edgeProfile.matched, true);
+  assert.equal(sent[0].edgeProfile.active, true);
+  assert.match(sent[0].edgeProfile.reason, /Matches the backtested profile/);
+});
+
+test('scanner: a required confirmation the setup lacks blocks the alert', async () => {
+  // The fixture fires all six, so require something outside that set.
+  const { scanner } = buildScanner({
+    edgeProfile: profileWith({ minScore: 3, requiredConfirmations: ['not_a_real_check'] }),
+  });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.stage, 'gate:edge');
+  assert.match(result.reason, /Missing confirmation/);
+});
+
+test('scanner: an instrument the backtest disabled never alerts', async () => {
+  const { scanner } = buildScanner({ edgeProfile: profileWith({ disabledInstruments: ['TEST'] }) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.stage, 'gate:edge');
+  assert.match(result.reason, /showed no edge in the backtest/);
+});
+
+test('scanner: an unvalidated profile does not filter anything', async () => {
+  const { scanner, sent } = buildScanner({ edgeProfile: profileWith({ minScore: 7 }, false) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, true, 'rules that failed their holdout are not enforced');
+  assert.equal(sent.length, 1);
+});
+
+test('scanner: with no profile at all, behaviour is unchanged', async () => {
+  const { scanner, sent } = buildScanner({ edgeProfile: new EdgeProfile(null) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, true);
+  assert.equal(sent.length, 1);
+});

@@ -80,7 +80,9 @@ const AlertSchema = new mongoose.Schema(
     outcome: {
       status: {
         type: String,
-        enum: ['pending', 'tp1', 'tp2', 'tp3', 'breakeven', 'stopped', 'cancelled'],
+        // tp1-tp3 = furthest target reached; timeout = still open when the
+        // review window ended; expired = a limit entry that never filled.
+        enum: ['pending', 'tp1', 'tp2', 'tp3', 'breakeven', 'stopped', 'timeout', 'expired', 'cancelled'],
         default: 'pending',
         index: true,
       },

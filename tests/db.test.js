@@ -101,3 +101,10 @@ test('db: write helpers no-op safely when there is no connection', async () => {
   assert.deepEqual(await db.performanceSummary(), []);
   await db.disconnect(); // idempotent
 });
+
+test('db: backtest outcome statuses are accepted by the schema', () => {
+  for (const status of ['pending', 'tp1', 'tp2', 'tp3', 'breakeven', 'stopped', 'timeout', 'expired', 'cancelled']) {
+    const doc = new Alert({ ...db.toDocument(sampleAlert()), outcome: { status } });
+    assert.equal(doc.validateSync(), undefined, `${status} should be a valid outcome`);
+  }
+});
