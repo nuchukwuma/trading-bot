@@ -211,3 +211,187 @@ test('features: a timeframe with no pattern simply contributes none', () => {
   assert.equal(features.some((f) => f.startsWith('htf_pattern:')), false);
   assert.ok(features.length > 5, 'the context tokens are still there');
 });
+
+// ------------------------------------------------------- price action
+const { detectPriceActionFeatures, isBreakAndRetest, isBreakerBlock, findInducement } = require('../src/features/priceAction');
+const { analyzeStructure } = require('../src/structure/marketStructure');
+
+const PA_OPTS = { avgPeriod: 20, retestRecency: 8, retestTolerance: 0.4, proximity: 1.0, lookback: 30 };
+
+test('price action: a broken level retested and held is a break-and-retest', () => {
+  const candles = [
+    c(at(0), 100, 102, 99, 101),
+    c(at(1), 101, 105, 100, 104), // swing high 105
+    c(at(2), 104, 103, 97, 99),
+    c(at(3), 99, 102, 95, 101), // swing low 95
+    c(at(4), 101, 104, 98, 103),
+    c(at(5), 103, 107, 103, 106), // BOS above 105
+    c(at(6), 106, 108, 105.5, 107),
+    c(at(7), 107, 107.5, 105.2, 106.5),
+    c(at(8), 106.5, 107, 104.9, 106.8), // wicks to the old 105 high and closes above
+  ];
+  const structure = analyzeStructure(candles, { swingLookback: 1, breakOnClose: true });
+  assert.equal(isBreakAndRetest(candles, structure, 'bullish', 1, PA_OPTS), true);
+});
+
+test('price action: a break price never returns to is not a retest', () => {
+  const candles = [
+    c(at(0), 100, 102, 99, 101),
+    c(at(1), 101, 105, 100, 104),
+    c(at(2), 104, 103, 97, 99),
+    c(at(3), 99, 102, 95, 101),
+    c(at(4), 101, 104, 98, 103),
+    c(at(5), 103, 107, 103, 106), // BOS
+    c(at(6), 106, 110, 106, 109), // runs away and never comes back
+    c(at(7), 109, 113, 109, 112),
+    c(at(8), 112, 116, 112, 115),
+  ];
+  const structure = analyzeStructure(candles, { swingLookback: 1, breakOnClose: true });
+  assert.equal(isBreakAndRetest(candles, structure, 'bullish', 1, PA_OPTS), false);
+});
+
+test('price action: a retest that fails to hold does not count', () => {
+  const candles = [
+    c(at(0), 100, 102, 99, 101),
+    c(at(1), 101, 105, 100, 104),
+    c(at(2), 104, 103, 97, 99),
+    c(at(3), 99, 102, 95, 101),
+    c(at(4), 101, 104, 98, 103),
+    c(at(5), 103, 107, 103, 106), // BOS above 105
+    c(at(6), 106, 107, 105.5, 106.5),
+    c(at(7), 106.5, 107, 104, 104.2), // comes back and CLOSES below the level
+  ];
+  const structure = analyzeStructure(candles, { swingLookback: 1, breakOnClose: true });
+  assert.equal(isBreakAndRetest(candles, structure, 'bullish', 1, PA_OPTS), false);
+});
+
+test('price action: the retest must be recent, not a dip back long ago', () => {
+  const base = [
+    c(at(0), 100, 102, 99, 101),
+    c(at(1), 101, 105, 100, 104),
+    c(at(2), 104, 103, 97, 99),
+    c(at(3), 99, 102, 95, 101),
+    c(at(4), 101, 104, 98, 103),
+    c(at(5), 103, 107, 103, 106), // BOS
+    c(at(6), 106, 107, 104.9, 106.5), // the retest, right after the break
+  ];
+  const structure = analyzeStructure(base, { swingLookback: 1, breakOnClose: true });
+  assert.equal(isBreakAndRetest(base, structure, 'bullish', 1, PA_OPTS), true);
+
+  // Same retest, but now twenty bars in the past.
+  const drifted = [...base, ...Array.from({ length: 20 }, (_, i) => c(at(7 + i), 110, 111, 109, 110))];
+  const driftedStructure = analyzeStructure(drifted, { swingLookback: 1, breakOnClose: true });
+  assert.equal(isBreakAndRetest(drifted, driftedStructure, 'bullish', 1, PA_OPTS), false);
+});
+
+test('price action: a break in the wrong direction is not this trade’s retest', () => {
+  const candles = [
+    c(at(0), 100, 102, 99, 101),
+    c(at(1), 101, 105, 100, 104),
+    c(at(2), 104, 103, 97, 99),
+    c(at(3), 99, 102, 95, 101),
+    c(at(4), 101, 104, 98, 103),
+    c(at(5), 103, 107, 103, 106),
+    c(at(6), 106, 107, 104.9, 106.5),
+  ];
+  const structure = analyzeStructure(candles, { swingLookback: 1, breakOnClose: true });
+  assert.equal(isBreakAndRetest(candles, structure, 'bearish', 1, PA_OPTS), false);
+});
+
+test('price action: a violated opposing order block being revisited is a breaker', () => {
+  const pois = [
+    { direction: 'bearish', kind: 'OB', top: 101, bottom: 100, violated: true },
+    { direction: 'bullish', kind: 'OB', top: 95, bottom: 94, violated: true },
+  ];
+  // Price back inside the failed supply zone, approaching it from above.
+  assert.equal(isBreakerBlock(pois, 'bullish', 100.5, 1, PA_OPTS), true);
+  // An intact zone is an ordinary POI, not a breaker.
+  assert.equal(isBreakerBlock([{ ...pois[0], violated: false }], 'bullish', 100.5, 1, PA_OPTS), false);
+  // A violated zone in the same direction as the trade is not a breaker either.
+  assert.equal(isBreakerBlock(pois, 'bearish', 100.5, 1, PA_OPTS), false);
+  // Nor is one price is nowhere near.
+  assert.equal(isBreakerBlock(pois, 'bullish', 130, 1, PA_OPTS), false);
+  assert.equal(isBreakerBlock(pois, 'bullish', NaN, 1, PA_OPTS), false);
+});
+
+test('price action: inducement distinguishes a pool already taken from one still resting', () => {
+  const candles = [
+    ...Array.from({ length: 9 }, (_, i) => c(at(i), 102.5, 103, 102, 102.5)),
+    c(at(9), 102.5, 102.5, 100.0, 101.0), // sweeps the 100.5 pool and closes back above
+    c(at(10), 101, 101.5, 100.8, 101.2),
+    c(at(11), 101.2, 101.3, 100.9, 101.0),
+  ];
+  const structure = {
+    swings: [
+      { type: 'low', index: 5, price: 100.5, confirmedAt: 6 }, // taken at bar 9
+      { type: 'low', index: 7, price: 101.8, confirmedAt: 8 }, // never taken
+    ],
+  };
+  const entryPoi = { top: 99, bottom: 98 };
+
+  const result = findInducement(candles, structure, 'bullish', entryPoi, 1, PA_OPTS);
+  assert.equal(result.taken, true, 'the 100.5 pool was swept on the way down');
+  assert.equal(result.ahead, true, 'the 101.8 pool is still sitting there');
+});
+
+test('price action: a pool below the POI is not inducement for that entry', () => {
+  const candles = Array.from({ length: 12 }, (_, i) => c(at(i), 102.5, 103, 102, 102.5));
+  const structure = { swings: [{ type: 'low', index: 5, price: 97, confirmedAt: 6 }] };
+  // The pool sits BELOW the demand zone, so price does not pass it on the way in.
+  const result = findInducement(candles, structure, 'bullish', { top: 99, bottom: 98 }, 1, PA_OPTS);
+  assert.deepEqual(result, { taken: false, ahead: false });
+});
+
+test('price action: with no entry zone there is nothing to be induced towards', () => {
+  const candles = Array.from({ length: 12 }, (_, i) => c(at(i), 102.5, 103, 102, 102.5));
+  const structure = { swings: [{ type: 'low', index: 5, price: 100.5, confirmedAt: 6 }] };
+  assert.deepEqual(findInducement(candles, structure, 'bullish', null, 1, PA_OPTS), { taken: false, ahead: false });
+});
+
+test('price action: the detector emits prefixed tokens and degrades quietly', () => {
+  const candles = [
+    ...Array.from({ length: 9 }, (_, i) => c(at(i), 102.5, 103, 102, 102.5)),
+    c(at(9), 102.5, 102.5, 100.0, 101.0),
+    c(at(10), 101, 101.5, 100.8, 101.2),
+    c(at(11), 101.2, 101.3, 100.9, 101.0),
+  ];
+  const found = detectPriceActionFeatures({
+    candles,
+    structure: { events: [], swings: [{ type: 'low', index: 5, price: 100.5, confirmedAt: 6 }] },
+    pois: [{ direction: 'bearish', kind: 'OB', top: 101.5, bottom: 100.5, violated: true }],
+    direction: 'bullish',
+    entryPoi: { top: 99, bottom: 98 },
+    price: 101,
+    opts: PA_OPTS,
+  });
+  assert.ok(found.includes('inducement'));
+  assert.ok(found.includes('breaker_block'));
+
+  assert.deepEqual(detectPriceActionFeatures({}), [], 'missing inputs return nothing rather than throwing');
+  assert.deepEqual(detectPriceActionFeatures({ candles: [], direction: 'bullish' }), []);
+});
+
+test('features: price-action tokens reach the vector under their own prefix', () => {
+  const ltf = bullishFiringScenario();
+  const structure = analyzeStructure(ltf, { swingLookback: 1, breakOnClose: true });
+  const features = extractFeatures({
+    instrument: { id: 'TEST', subKind: null },
+    bias: { direction: 'bullish', strength: 'moderate' },
+    scoring: {
+      score: 4,
+      fired: [{ id: 'ltf_structure' }],
+      confirmations: [],
+      entryPoi: { kind: 'OB', top: 99.8, bottom: 98.8 },
+      ltfStructure: structure,
+      ltfPois: [{ direction: 'bearish', kind: 'OB', top: 100.5, bottom: 99.6, violated: true }],
+      price: 99.5,
+    },
+    plan: { riskReward: 2, riskDistance: 3, targets: [] },
+    ltfCandles: ltf,
+    htfCandles: [],
+    opts: { patterns: OPTS, priceAction: PA_OPTS },
+  });
+
+  assert.ok(features.some((f) => f.startsWith('pa:')), 'the pa: family is present');
+  assert.deepEqual(features, [...features].sort());
+});

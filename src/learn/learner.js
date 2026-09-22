@@ -88,13 +88,25 @@ function learn(trades, opts = {}) {
   }
 
   // ---- 2. feature search --------------------------------------------------
+  // Features are SCREENED on the whole training set, not on what survives the
+  // score threshold. Screening inside the narrowed pool throws away most of the
+  // statistical power: a score rule can easily cut the sample by 80%, leaving
+  // too few trades for any feature to be testable at all. Interaction between
+  // rules is handled instead by re-measuring each candidate inside the current
+  // pool before it is adopted.
   let pool = applyRules(train, rules);
-  const candidates = testFeatures(pool, cfg);
+  const candidates = testFeatures(train, cfg);
 
   const significant = candidates.filter((c) => c.significant);
   notes.push(
     `Tested ${candidates.length} features; ${significant.length} survived false-discovery control at q=${cfg.fdr}.`
   );
+
+  if (pool.length < cfg.minSamples * 2 && budget > 0) {
+    notes.push(
+      `Only ${pool.length} training trades survive the score rule — too few to add a feature rule on top of it.`
+    );
+  }
 
   if (budget === 0) {
     notes.push(

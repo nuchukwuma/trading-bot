@@ -1,6 +1,7 @@
 'use strict';
 
 const { detectPatterns } = require('./patterns');
+const { detectPriceActionFeatures } = require('./priceAction');
 const { extractContext } = require('./context');
 
 /**
@@ -19,10 +20,23 @@ function extractFeatures({ instrument, bias, scoring, plan, ltfCandles, htfCandl
     for (const p of detectPatterns(htfCandles, opts.patterns)) tokens.push(`htf_pattern:${p}`);
   }
 
+  // Structural price action: break and retest, breakers, inducement.
+  for (const f of detectPriceActionFeatures({
+    candles: ltfCandles,
+    structure: scoring.ltfStructure,
+    pois: scoring.ltfPois || [],
+    direction: bias.direction,
+    entryPoi: scoring.entryPoi,
+    price: scoring.price,
+    opts: opts.priceAction,
+  })) {
+    tokens.push(`pa:${f}`);
+  }
+
   tokens.push(...extractContext({ instrument, bias, scoring, plan, ltfCandles }));
 
   // Stable order, no duplicates — signatures have to be comparable.
   return [...new Set(tokens)].sort();
 }
 
-module.exports = { extractFeatures, detectPatterns, extractContext };
+module.exports = { extractFeatures, detectPatterns, detectPriceActionFeatures, extractContext };
