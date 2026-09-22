@@ -26,6 +26,15 @@ async function main() {
   );
   if (config.dryRun) log.warn('DRY_RUN is on — alerts are formatted and logged but not sent');
 
+  const uncalibrated = config.instruments.filter((i) => i.calibrated === false);
+  if (uncalibrated.length) {
+    log.warn(
+      `uncalibrated instrument(s): ${uncalibrated
+        .map((i) => i.id)
+        .join(', ')} — stop buffer and lot constraints are estimates. Run "npm run calibrate".`
+    );
+  }
+
   const scanner = new Scanner();
 
   if (config.db.enabled) {

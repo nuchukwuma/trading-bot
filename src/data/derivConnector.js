@@ -162,6 +162,15 @@ class DerivConnector {
     return dropForming(candles, tfSeconds);
   }
 
+  /**
+   * The tradeable symbol list. Used by the calibration script to confirm the
+   * symbols in the instrument registry actually exist on the feed.
+   */
+  async fetchActiveSymbols(productType = 'basic') {
+    const res = await this.send({ active_symbols: 'brief', product_type: productType });
+    return res.active_symbols || [];
+  }
+
   close() {
     this.closedByUs = true;
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer);

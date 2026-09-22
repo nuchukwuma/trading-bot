@@ -56,6 +56,10 @@ class Scanner {
   }
 
   async scanInstrument(instrument, { rates = {}, now = Date.now() } = {}) {
+    // Instruments whose price process needs different thresholds (the Jump
+    // indices, for one) carry their own overrides on top of the global config.
+    const engineOpts = mergeEngineOpts(this.opts, instrument.engine);
+
     const { htf, ltf } = await this.data.getBiasAndEntryCandles(instrument, {
       htfSeconds: config.timeframes.htfSeconds,
       ltfSeconds: config.timeframes.ltfSeconds,
@@ -71,15 +75,15 @@ class Scanner {
     const bias = computeBias(htf, {
       instrument,
       timeframe: config.timeframes.htf,
-      structureOpts: this.opts.structure,
-      poi: this.opts.poi,
+      structureOpts: engineOpts.structure,
+      poi: engineOpts.poi,
     });
     if (bias.direction === 'neutral') {
       return { instrumentId: instrument.id, fired: false, stage: 'bias', reason: bias.reasons[0], bias };
     }
 
     // ---- 2. 30m confirmations ----
-    const scoring = scoreSetup({ instrument, bias, ltfCandles: ltf, opts: this.opts });
+    const scoring = scoreSetup({ instrument, bias, ltfCandles: ltf, opts: engineOpts });
     if (!scoring.passed) {
       return {
         instrumentId: instrument.id,
@@ -106,7 +110,7 @@ class Scanner {
       // the way back out is the setup working, not an obstacle to it.
       opposingPois: bias.pois || [],
       rates,
-      opts: this.opts.tradePlan,
+      opts: engineOpts.tradePlan,
     });
 
     if (!plan.valid) {
@@ -194,4 +198,18 @@ class Scanner {
   }
 }
 
-module.exports = { Scanner };
+/**
+ * Merge per-instrument engine overrides over the global options, one level deep
+ * so a instrument can override a single threshold without restating its section.
+ */
+function mergeEngineOpts(base = {}, override = {}) {
+  if (!override) return { ...base };
+  const out = { ...base };
+  for (const [section, value] of Object.entries(override)) {
+    const isPlainObject = value && typeof value === 'object' && !Array.isArray(value);
+    out[section] = isPlainObject ? mergeEngineOpts(base[section] || {}, value) : value;
+  }
+  return out;
+}
+
+module.exports = { Scanner, mergeEngineOpts };

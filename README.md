@@ -1,6 +1,7 @@
 # SMC Alert Bot
 
-A Smart Money Concepts trading **alert** bot for Deriv synthetic indices and major forex pairs.
+A Smart Money Concepts trading **alert** bot for Deriv synthetic indices (Volatility and Jump)
+and major forex pairs.
 It analyses the market and sends a formatted Telegram alert. **It never places, modifies or closes
 an order** — there is no trade endpoint anywhere in the codebase.
 
@@ -16,7 +17,8 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 165 unit tests, no network or database needed
+npm test                 # 183 unit tests, no network or database needed
+npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run scan             # one scan pass, then exit
 npm start                # run continuously, scanning on every 30m close
 ```
@@ -78,7 +80,9 @@ Each fired check returns a one-line human-readable reason, and every reason trav
 - **Entry** — the POI edge price meets first, never a level price has already traded through.
 - **Stop** — a *fixed* per-instrument buffer beyond the sweep wick or the POI's far edge, whichever
   is further from entry. Deliberately **not** ATR-scaled, so the same setup always risks the same
-  distance on a given instrument (`slBuffer` in `src/config/instruments.js`).
+  distance on a given instrument (`slBuffer` in `src/config/instruments.js`). It is either a number
+  of price units, or `{ pct }` as a fixed fraction of the entry price — the latter for indices whose
+  level drifts far enough that an absolute buffer goes stale. Neither form reacts to volatility.
 - **Targets** — 1:2 / 1:3.5 / 1:5, closing 50% / 30% / 20%. Stop to breakeven after TP1, trail
   behind 30m structure after TP2. Each target is capped at the nearest obstacle ahead — untapped
   liquidity or an unmitigated opposing 4H POI — which is what gives TP3 its "next major liquidity
@@ -106,6 +110,48 @@ An alert is suppressed when a recent one matches the same instrument + direction
 same POI id, or an entry within 25% of the stop distance. Entries expire after `DEDUP_TTL_MINUTES`
 (4h by default) and the window is re-seeded from MongoDB on restart, so a restart does not replay
 alerts that already went out.
+
+## Instruments
+
+| Group | Instruments | Source |
+| --- | --- | --- |
+| Volatility indices | Vol 50, Vol 75 | Deriv WebSocket |
+| Jump indices | Jump 10, 25, 50, 75, 100 | Deriv WebSocket |
+| Forex majors | EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, GBP/JPY | OANDA REST |
+
+Restrict a run with `INSTRUMENTS=JUMP75,EURUSD`, or drop one permanently with `enabled: false`.
+
+### Jump indices
+
+Jump indices tick like the volatility indices but add a discrete **jump** roughly three times an
+hour, each around 30x a normal tick move. Two of those consequences are mechanical artefacts of the
+jump process rather than anything institutional, so each Jump instrument carries engine overrides:
+
+| Override | Default | Jump | Why |
+| --- | --- | --- | --- |
+| `displacement.bodyMultiple` | 1.5 | 2.5 | A 30m candle containing a jump has a huge body, so the normal bar fires on almost every jump |
+| `poi.fvg.minGapFactor` | 0.1 | 0.35 | Jumps leave three-candle gaps by themselves, which are not imbalance in the SMC sense |
+
+Any instrument can carry an `engine: { ... }` block; the scanner merges it over the global config
+one level deep, so a single threshold can be overridden without restating its section.
+
+**A jump can gap straight through the stop.** No buffer width prevents that, and it is the main
+reason to treat alerts on these indices more cautiously than the volatility ones.
+
+The Jump entries are marked `calibrated: false` because their symbols, price levels and lot
+constraints have not been checked against a live feed. `npm run calibrate` confirms every symbol
+exists, reports the recent 30m range distribution and suggests a stop buffer:
+
+```
+30m candle ranges and stop buffer suggestions
+
+instrument  price         median        p90           suggested     configured    as pct
+------------------------------------------------------------------------------------------------
+JUMP75      99412.8300    284.1500      611.2200      142.0750      149.1192      0.1429%
+```
+
+It never runs during a scan — it only helps you choose the constant. Until then the bot warns at
+startup that those numbers are estimates.
 
 ## Layout
 
@@ -143,5 +189,5 @@ score, so you can see whether a higher score actually converts better.
 
 Everything adjustable lives in `src/config/index.js` and is overridable by environment variable —
 swing lookback, break-on-close, mitigation fill ratio, sweep lookback, displacement multiple,
-minimum confirmations, the R:R floor and the TP ladder. Per-instrument stop buffers and lot
-constraints live in `src/config/instruments.js`.
+minimum confirmations, the R:R floor and the TP ladder. Per-instrument stop buffers, lot
+constraints and engine overrides live in `src/config/instruments.js`.
