@@ -141,16 +141,33 @@ function sweepReason(group, direction, level, instrument) {
   )}, wick rejected back inside`;
 }
 
-/** The nearest untapped liquidity pool beyond `price` — used as a TP3 target. */
+/**
+ * The nearest UNTAPPED liquidity pool beyond `price` — used as a TP target and
+ * as the obstacle the R:R gate measures against.
+ *
+ * When `candles` are supplied, levels price has already traded through are
+ * dropped: those stops are gone, so there is nothing left there to draw price.
+ */
 function nextLiquidityPool(swings, price, direction, opts = {}) {
   const type = direction === 'bullish' ? 'high' : 'low';
+  const untapped = (swing) => {
+    if (!opts.candles) return true;
+    for (let j = swing.index + 1; j < opts.candles.length; j += 1) {
+      const beyond =
+        direction === 'bullish' ? opts.candles[j].high > swing.price : opts.candles[j].low < swing.price;
+      if (beyond) return false;
+    }
+    return true;
+  };
+
   const candidates = swings
     .filter((s) => s.type === type)
-    .filter((s) => (direction === 'bullish' ? s.price > price : s.price < price));
+    .filter((s) => (direction === 'bullish' ? s.price > price : s.price < price))
+    .filter(untapped);
   if (!candidates.length) return null;
 
   // Prefer equal-level clusters (more resting stops) then the closest level.
-  const groups = findEqualLevels(swings, type, opts.tolerance || 0);
+  const groups = findEqualLevels(swings, type, opts.tolerance || 0).filter((g) => g.members.every(untapped));
   const clustered = groups
     .map((g) => ({ price: g.price, count: g.count, type: g.type }))
     .filter((g) => (direction === 'bullish' ? g.price > price : g.price < price));

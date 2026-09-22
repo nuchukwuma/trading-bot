@@ -126,6 +126,7 @@ function resolveObstacle(input, entryPrice, direction) {
 
   if (input.swings && input.swings.length) {
     const pool = nextLiquidityPool(input.swings, entryPrice, direction, {
+      candles: input.candles,
       tolerance: input.candles ? equalTolerance(input.candles, input.opts || {}) : 0,
     });
     if (pool) candidates.push({ price: pool.price, kind: pool.kind, count: pool.count, source: 'liquidity' });

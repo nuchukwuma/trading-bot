@@ -102,3 +102,43 @@ function bullishScenario() {
 }
 
 module.exports.bullishScenario = bullishScenario;
+
+/**
+ * A bullish scenario that survives every gate: the same sweep -> displacement
+ * -> BOS sequence, but price runs well past the old highs before retracing
+ * into the order block, so there is untapped liquidity left to target.
+ */
+function bullishFiringScenario() {
+  const at = (i) => BASE_TIME + i * 1800;
+  return [
+    ...noise(10, 100),
+    c(at(10), 100, 100.5, 98.0, 99.0), // swing low 98
+    c(at(11), 99.0, 100.0, 98.8, 99.8),
+    c(at(12), 99.8, 101.0, 99.5, 100.8),
+    c(at(13), 100.8, 103.0, 100.5, 102.8), // swing high 103
+    c(at(14), 102.8, 102.9, 101.0, 101.2),
+    c(at(15), 101.2, 101.5, 99.5, 99.8),
+    c(at(16), 99.8, 100.0, 98.5, 99.2),
+    c(at(17), 99.2, 99.5, 97.0, 99.3), // sweep below 98
+    c(at(18), 99.3, 99.8, 98.8, 98.9), // order block 98.80-99.80
+    c(at(19), 98.9, 103.5, 98.8, 103.4), // displacement -> BOS over 103
+    c(at(20), 103.4, 108.0, 102.8, 107.5), // expansion
+    c(at(21), 107.5, 108.2, 106.0, 106.5), // swing high 108.20, still untapped
+    c(at(22), 106.5, 106.8, 103.0, 103.2),
+    c(at(23), 103.2, 103.5, 100.0, 100.2),
+    c(at(24), 100.2, 100.4, 99.4, 99.5), // retrace into the order block
+  ];
+}
+
+module.exports.bullishFiringScenario = bullishFiringScenario;
+
+/**
+ * The 4H backdrop for the firing scenario: the same sequence truncated before
+ * the retrace, so the HTF read is a clean uptrend with the demand zone still
+ * unmitigated and nothing opposing overhead.
+ */
+function bullishHtfScenario() {
+  return bullishFiringScenario().slice(0, 22);
+}
+
+module.exports.bullishHtfScenario = bullishHtfScenario;

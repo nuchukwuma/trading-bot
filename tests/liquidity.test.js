@@ -169,3 +169,25 @@ test('liquidity pools: the next pool beyond price prefers equal-level clusters',
   assert.equal(nextLiquidityPool([swingHigh(1, 90)], 100, 'bullish'), null, 'nothing above price');
   assert.equal(nextLiquidityPool([swingLow(1, 90)], 100, 'bearish').price, 90);
 });
+
+test('liquidity pools: levels price has already traded through are not pools', () => {
+  const candles = [
+    ...noise(10, 100),
+    c(at(10), 100, 103.0, 99.5, 102.5), // swing high 103
+    c(at(11), 102.5, 102.8, 101.0, 101.5),
+    c(at(12), 101.5, 108.0, 101.4, 107.5), // runs straight through 103
+    c(at(13), 107.5, 108.2, 106.0, 106.5), // swing high 108.2, untapped
+    c(at(14), 106.5, 106.8, 104.0, 104.2),
+  ];
+  const swings = detectSwings(candles, 1);
+
+  const naive = nextLiquidityPool(swings, 104, 'bullish');
+  assert.equal(naive.price, 108.2, 'the 103 high is below the entry price anyway');
+
+  // From below the tapped level, it must still be skipped.
+  const filtered = nextLiquidityPool(swings, 102, 'bullish', { candles });
+  assert.equal(filtered.price, 108.2, 'the 103 high was already taken, so no stops rest there');
+
+  const unfiltered = nextLiquidityPool(swings, 102, 'bullish');
+  assert.equal(unfiltered.price, 103, 'without candles the check cannot be made');
+});
