@@ -157,6 +157,27 @@ const config = {
     enforceUnvalidated: bool(process.env.EDGE_PROFILE_ENFORCE_UNVALIDATED, false),
   },
 
+  // ---------------- Learning ----------------
+  learn: {
+    // Seed trades written by `npm run backtest`, pooled with live outcomes.
+    seedPath: process.env.LEARN_SEED_PATH || 'data/backtest-trades.json',
+    // Re-run the learner once this many new outcomes have resolved.
+    relearnEvery: num(process.env.LEARN_RELEARN_EVERY, 25),
+    // Bars a live setup is tracked for before it is marked out.
+    maxBars: num(process.env.LEARN_MAX_BARS, 96),
+    // One feature rule earned per this many resolved trades.
+    tradesPerRule: num(process.env.LEARN_TRADES_PER_RULE, 100),
+    maxFeatureRules: num(process.env.LEARN_MAX_FEATURE_RULES, 4),
+    minSamples: num(process.env.LEARN_MIN_SAMPLES, 30),
+    trainRatio: num(process.env.LEARN_TRAIN_RATIO, 0.7),
+    fdr: num(process.env.LEARN_FDR, 0.1),
+    maxLedgerTrades: num(process.env.LEARN_MAX_LEDGER, 20000),
+    // Log setups the profile held back, so learning keeps covering the full
+    // distribution instead of only what the bot already believes in.
+    shadowLogging: bool(process.env.LEARN_SHADOW_LOGGING, true),
+    enabled: bool(process.env.LEARN_ENABLED, true),
+  },
+
   // ---------------- Backtest ----------------
   backtest: {
     candles: num(process.env.BACKTEST_CANDLES, 5000),

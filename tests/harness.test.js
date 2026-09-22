@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const { randomWalkSeries } = require('../src/backtest/randomWalk');
 const { replayInstrument } = require('../src/backtest/replay');
 const { selectProfile } = require('../src/backtest/analyze');
+const { learn } = require('../src/learn/learner');
 
 /**
  * End-to-end calibration of the backtest harness itself.
@@ -97,4 +98,38 @@ test('harness: replay forwards simulator options rather than ignoring them', { t
     'a two-bar limit must strand trades that a 96-bar limit resolves'
   );
   assert.ok(impatient.trades.every((t) => t.barsHeld <= 2));
+});
+
+
+test('harness: the feature learner invents no patterns in noise', { timeout: 180000 }, () => {
+  // The learner now searches dozens of chart-pattern and context features at
+  // once. On a random walk every one of them is worthless, so the correct
+  // output is an empty rule set — even though the sample earns a rule budget.
+  const { trades } = run({ bars: 9000, seed: 51 });
+  assert.ok(trades.length > 150, `need a real sample, got ${trades.length}`);
+
+  const result = learn(trades, { minSamples: 30, tradesPerRule: 100 });
+
+  assert.ok(result.growth.featureRuleBudget >= 1, 'the sample did earn a budget, so the test is not vacuous');
+  assert.ok(result.candidates.length > 10, 'and plenty of features were actually tested');
+  assert.deepEqual(result.rules.requiredFeatures, [], 'no pattern may be required from noise');
+  assert.deepEqual(result.rules.excludedFeatures, [], 'and none excluded');
+  assert.equal(result.validated, false);
+});
+
+test('harness: false-discovery control keeps the survivor count near its bound', { timeout: 180000 }, () => {
+  const { trades } = run({ bars: 9000, seed: 52 });
+  const result = learn(trades, { minSamples: 30, fdr: 0.1 });
+
+  // With FDR control at q=0.1, a field of pure nulls should leave very few
+  // survivors. Uncorrected, roughly 5% of everything tested would pass.
+  const survivors = result.candidates.filter((c) => c.significant).length;
+  const uncorrected = result.candidates.filter((c) => c.p < 0.05).length;
+
+  assert.ok(
+    survivors <= Math.max(2, Math.ceil(result.candidates.length * 0.05)),
+    `${survivors} of ${result.candidates.length} survived — correction is not biting`
+  );
+  assert.ok(uncorrected >= survivors, 'correction can only ever reduce the count');
+  assert.deepEqual(result.rules.requiredFeatures, [], 'and nothing reached the rule set regardless');
 });

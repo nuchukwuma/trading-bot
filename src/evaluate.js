@@ -4,6 +4,7 @@ const config = require('./config');
 const { computeBias } = require('./structure/bias');
 const { scoreSetup } = require('./scoring');
 const { buildTradePlan } = require('./tradeplan');
+const { extractFeatures } = require('./features');
 
 /**
  * Evaluate one instrument at one moment in time.
@@ -69,7 +70,20 @@ function evaluateSetup({ instrument, htf, ltf, engineOpts = {}, rates = {} }) {
     return { ok: false, stage: `gate:${plan.gate}`, reason: plan.reason, bias, scoring, plan };
   }
 
-  return { ok: true, stage: 'setup', bias, scoring, plan };
+  // ---- 4. Features the learner searches over ----
+  // Computed here, in the shared path, so a live setup and its backtested twin
+  // always carry the identical vector.
+  const features = extractFeatures({
+    instrument,
+    bias,
+    scoring,
+    plan,
+    ltfCandles: ltf,
+    htfCandles: htf,
+    opts: engineOpts.features,
+  });
+
+  return { ok: true, stage: 'setup', bias, scoring, plan, features };
 }
 
 /** The shape both the alert formatter and the backtest recorder consume. */
@@ -88,6 +102,8 @@ function buildSetupRecord({ instrument, evaluation, ltf }) {
     price: scoring.price,
     candleTime: ltf[ltf.length - 1].time,
     poiId: scoring.entryPoi ? scoring.entryPoi.id : null,
+    poiKind: scoring.entryPoi ? scoring.entryPoi.kind : null,
+    features: evaluation.features || [],
   };
 }
 

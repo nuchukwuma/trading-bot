@@ -29,6 +29,7 @@ class Scanner {
     this.alerts = opts.alerts || new AlertService();
     this.db = opts.db || db;
     this.instruments = opts.instruments || config.instruments;
+    this.lastCandles = new Map();
     this.opts = opts.engineOpts || {};
     this.persist = opts.persist !== undefined ? opts.persist : config.db.enabled;
     this.edgeProfile =
@@ -37,6 +38,8 @@ class Scanner {
         required: config.edge.required,
         enforceUnvalidated: config.edge.enforceUnvalidated,
       });
+    this.shadowLogging = opts.shadowLogging !== undefined ? opts.shadowLogging : config.learn.shadowLogging;
+    this.learning = opts.learning || null;
   }
 
   async scanAll(now = Date.now()) {
@@ -55,8 +58,28 @@ class Scanner {
       }
     }
 
+    // Let the market answer whatever it has answered, then grow if there is
+    // enough new evidence to be worth re-learning from.
+    if (this.learning) {
+      for (const instrument of this.instruments) {
+        const candles = this.lastCandles.get(instrument.id);
+        if (!candles) continue;
+        await this.learning.resolve(instrument, candles, now / 1000).catch((err) => {
+          log.error(`${instrument.id} outcome resolution failed: ${err.message}`);
+        });
+      }
+      await this.learning.relearn().catch((err) => log.error(`relearn failed: ${err.message}`));
+      this.edgeProfile = EdgeProfile.load(config.edge.profilePath, {
+        required: config.edge.required,
+        enforceUnvalidated: config.edge.enforceUnvalidated,
+      });
+    }
+
     const fired = results.filter((r) => r.fired).length;
-    log.info(`scan complete — ${fired} alert(s) from ${results.length} instrument(s)`);
+    const shadowed = results.filter((r) => r.shadowed).length;
+    log.info(
+      `scan complete — ${fired} alert(s), ${shadowed} held back and tracked, from ${results.length} instrument(s)`
+    );
     return results;
   }
 
@@ -72,6 +95,8 @@ class Scanner {
       ltfCount: config.timeframes.ltfCandles,
     });
 
+    this.lastCandles.set(instrument.id, ltf);
+
     const evaluation = evaluateSetup({ instrument, htf, ltf, engineOpts, rates });
     if (!evaluation.ok) {
       return {
@@ -86,7 +111,25 @@ class Scanner {
     }
     const { bias, scoring, plan } = evaluation;
 
-    // ---- 4. Learned edge profile ----
+    const fingerprint = {
+      instrumentId: instrument.id,
+      direction: bias.direction,
+      poiId: scoring.entryPoi ? scoring.entryPoi.id : null,
+      entryPrice: plan.entryPrice,
+      riskDistance: plan.riskDistance,
+    };
+
+    // ---- 4. De-duplication, before the edge gate ----
+    // Checked here rather than inside delivery so an alerted setup and a
+    // shadow-logged one are suppressed on the same terms, which keeps the live
+    // record directly comparable with the backtest.
+    if (this.alerts.isDuplicate(fingerprint, now)) {
+      return { instrumentId: instrument.id, fired: false, stage: 'dedup', reason: 'Duplicate of a recent setup', bias, scoring, plan };
+    }
+
+    const alert = buildSetupRecord({ instrument, evaluation, ltf });
+
+    // ---- 5. Learned edge profile ----
     // The gates above say the setup is structurally valid. This says whether
     // setups like it have actually paid, which is a different question.
     const verdict = this.edgeProfile.evaluate({
@@ -94,25 +137,42 @@ class Scanner {
       direction: bias.direction,
       score: scoring.score,
       confirmations: scoring.fired.map((c) => c.id),
+      features: evaluation.features || [],
       biasStrength: bias.strength,
     });
+    alert.edgeProfile = { matched: verdict.allow, reason: verdict.reason, active: this.edgeProfile.active };
+
     if (!verdict.allow) {
-      log.debug(`${instrument.id} filtered by edge profile: ${verdict.reason}`);
+      // Held back from the user, but still tracked and learned from. Without
+      // this the bot would only ever see outcomes for trades it already
+      // believed in, and the filter could never discover it was wrong.
+      this.alerts.reserve(fingerprint, now);
+      let shadowId = null;
+      if (this.persist && this.shadowLogging) {
+        const record = await this.db
+          .logAlert(alert, { delivered: false, shadow: true })
+          .catch((err) => {
+            log.error(`failed to shadow-log setup: ${err.message}`);
+            return null;
+          });
+        shadowId = record ? String(record._id) : null;
+      }
+      log.debug(`${instrument.id} held back by edge profile: ${verdict.reason}`);
       return {
         instrumentId: instrument.id,
         fired: false,
+        shadowed: true,
         stage: 'gate:edge',
         reason: verdict.reason,
+        recordId: shadowId,
+        alert,
         bias,
         scoring,
         plan,
       };
     }
 
-    // ---- 5. Delivery + logging ----
-    const alert = buildSetupRecord({ instrument, evaluation, ltf });
-    alert.edgeProfile = { matched: true, reason: verdict.reason, active: this.edgeProfile.active };
-
+    // ---- 6. Delivery + logging ----
     const delivery = await this.alerts.deliver(alert, now);
 
     let record = null;

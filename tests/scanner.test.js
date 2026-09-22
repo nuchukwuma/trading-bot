@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { Scanner } = require('../src/scanner');
+const { AlertService } = require('../src/alerts');
 const { bullishFiringScenario, bullishHtfScenario, noise } = require('./helpers/candles');
 
 const TEST_INSTRUMENT = {
@@ -34,25 +35,34 @@ function fakeData({ htf, ltf, oanda = null } = {}) {
   };
 }
 
+/**
+ * A real AlertService over a stub transport, so de-duplication and the
+ * alert/shadow split are exercised rather than mocked away.
+ */
 function buildScanner(overrides = {}) {
   const sent = [];
   const logged = [];
+  const alerts = new AlertService({
+    telegram: { sendMessage: async (m) => sent.push(m) },
+    dedupOpts: { ttlMinutes: 240, priceTolerance: 0.25 },
+    dryRun: false,
+  });
   const scanner = new Scanner({
     data: fakeData({ htf: bullishHtfScenario(), ltf: bullishFiringScenario() }),
-    alerts: {
-      deliver: async (alert) => {
-        sent.push(alert);
-        return { sent: true, message: 'formatted' };
+    alerts,
+    db: {
+      logAlert: async (a, opts = {}) => {
+        logged.push({ alert: a, ...opts });
+        return { _id: 'rec1' };
       },
-      seedFrom() {},
     },
-    db: { logAlert: async (a) => { logged.push(a); return { _id: 'rec1' }; } },
     instruments: [TEST_INSTRUMENT],
     engineOpts: ENGINE_OPTS,
     persist: true,
+    shadowLogging: true,
     ...overrides,
   });
-  return { scanner, sent, logged };
+  return { scanner, sent, logged, alerts };
 }
 
 test('scanner: a qualifying setup runs the whole pipeline and fires', async () => {
@@ -77,25 +87,24 @@ test('scanner: a qualifying setup runs the whole pipeline and fires', async () =
 
   assert.equal(sent.length, 1);
   assert.equal(logged.length, 1);
-  assert.equal(sent[0].confirmations.length, 6, 'all six reasons travel with the alert');
-  assert.equal(sent[0].allConfirmations.length, 6);
-  assert.ok(sent[0].poiId);
+  assert.equal(logged[0].alert.confirmations.length, 6, 'all six reasons travel with the alert');
+  assert.equal(logged[0].alert.allConfirmations.length, 6);
+  assert.ok(logged[0].alert.poiId);
+  assert.ok(Array.isArray(logged[0].alert.features) && logged[0].alert.features.length > 0, 'features are recorded');
+  assert.equal(logged[0].shadow, undefined, 'a delivered alert is not a shadow record');
 });
 
-test('scanner: a duplicate is not logged twice', async () => {
-  const logged = [];
-  const { scanner } = buildScanner({
-    alerts: {
-      deliver: async () => ({ sent: false, skipped: 'duplicate', duplicateOf: {} }),
-      seedFrom() {},
-    },
-    db: { logAlert: async (a) => { logged.push(a); return { _id: 'x' }; } },
-  });
+test('scanner: the same setup does not fire or log twice', async () => {
+  const { scanner, sent, logged } = buildScanner();
 
-  const [result] = await scanner.scanAll();
-  assert.equal(result.fired, false);
-  assert.equal(result.stage, 'dedup');
-  assert.equal(logged.length, 0, 'a suppressed duplicate is not re-persisted');
+  const [first] = await scanner.scanAll();
+  assert.equal(first.fired, true);
+
+  const [second] = await scanner.scanAll();
+  assert.equal(second.fired, false);
+  assert.equal(second.stage, 'dedup');
+  assert.equal(sent.length, 1, 'nothing was sent the second time');
+  assert.equal(logged.length, 1, 'and nothing was re-persisted');
 });
 
 test('scanner: no HTF direction stops before any 30m work', async () => {
@@ -290,7 +299,9 @@ test('scanner: a Jump index runs the pipeline with its own thresholds', async ()
   assert.equal(result.plan.side, 'BUY');
   assert.ok(Math.abs(result.plan.stopBuffer - 99.5 * 0.005) < 1e-9, 'the pct buffer resolved off the entry price');
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].instrument.id, 'JUMP75');
+  assert.equal(result.alert.instrument.id, 'JUMP75');
+  assert.ok(result.alert.features.includes('instrument:JUMP75'));
+  assert.ok(result.alert.features.includes('kind:jump'), 'the jump sub-kind is a learnable feature');
 });
 
 // ---------------------------------------------------------------- edge gate
@@ -325,7 +336,12 @@ test('scanner: the edge profile blocks a setup that clears every structural gate
   assert.equal(result.stage, 'gate:edge');
   assert.match(result.reason, /below the backtested minimum of 7/);
   assert.equal(sent.length, 0, 'nothing was sent');
-  assert.equal(logged.length, 0, 'and nothing was logged');
+
+  // Held back from the user, but still recorded so the learner keeps seeing it.
+  assert.equal(result.shadowed, true);
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].shadow, true);
+  assert.equal(logged[0].delivered, false);
 });
 
 test('scanner: a matching setup passes the edge profile and carries the reason', async () => {
@@ -335,9 +351,9 @@ test('scanner: a matching setup passes the edge profile and carries the reason',
   const [result] = await scanner.scanAll();
 
   assert.equal(result.fired, true);
-  assert.equal(sent[0].edgeProfile.matched, true);
-  assert.equal(sent[0].edgeProfile.active, true);
-  assert.match(sent[0].edgeProfile.reason, /Matches the backtested profile/);
+  assert.equal(result.alert.edgeProfile.matched, true);
+  assert.equal(result.alert.edgeProfile.active, true);
+  assert.match(result.alert.edgeProfile.reason, /Matches the backtested profile/);
 });
 
 test('scanner: a required confirmation the setup lacks blocks the alert', async () => {

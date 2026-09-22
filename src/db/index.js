@@ -26,7 +26,7 @@ async function disconnect() {
 const isConnected = () => connected && mongoose.connection.readyState === 1;
 
 /** Map a fired alert onto the persisted document shape. */
-function toDocument(alert, { delivered = false } = {}) {
+function toDocument(alert, { delivered = false, shadow = false } = {}) {
   const { instrument, plan, bias } = alert;
   return {
     instrumentId: instrument.id,
@@ -74,10 +74,31 @@ function toDocument(alert, { delivered = false } = {}) {
     },
 
     poiId: alert.poiId,
+    poiKind: alert.poiKind || null,
     dedupKey: `${instrument.id}:${alert.direction}:${alert.poiId || 'no-poi'}`,
     delivered,
+    features: alert.features || [],
+    shadow: Boolean(shadow),
+    edgeProfileReason: alert.edgeProfile ? alert.edgeProfile.reason : undefined,
     outcome: { status: 'pending' },
   };
+}
+
+async function pendingAlerts(instrumentId, { limit = 200 } = {}) {
+  if (!isConnected()) return [];
+  return Alert.find({ instrumentId, 'outcome.status': 'pending' })
+    .sort({ candleTime: 1 })
+    .limit(limit)
+    .lean();
+}
+
+/** Every alert whose outcome is known — the learner's live training set. */
+async function resolvedAlerts({ limit = 20000 } = {}) {
+  if (!isConnected()) return [];
+  return Alert.find({ 'outcome.status': { $ne: 'pending' } })
+    .sort({ candleTime: 1 })
+    .limit(limit)
+    .lean();
 }
 
 async function logAlert(alert, opts = {}) {
@@ -134,6 +155,8 @@ module.exports = {
   logAlert,
   toDocument,
   recentAlerts,
+  pendingAlerts,
+  resolvedAlerts,
   recordOutcome,
   performanceSummary,
   Alert,

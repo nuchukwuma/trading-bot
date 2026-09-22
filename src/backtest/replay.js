@@ -57,7 +57,7 @@ function replayInstrument({ instrument, htf, ltf, opts = {} }) {
       continue;
     }
 
-    const { bias, scoring, plan } = evaluation;
+    const { bias, scoring, plan, features } = evaluation;
 
     // The live bot would not have sent a repeat, so the backtest must not
     // count one either.
@@ -84,13 +84,15 @@ function replayInstrument({ instrument, htf, ltf, opts = {} }) {
       opts: opts.simulator || {},
     });
 
-    trades.push(buildTradeRecord({ instrument, bias, scoring, plan, outcome, barIndex: i, time: ltf[i].time }));
+    trades.push(
+      buildTradeRecord({ instrument, bias, scoring, plan, outcome, features, barIndex: i, time: ltf[i].time })
+    );
   }
 
   return { instrumentId: instrument.id, trades, skipped, evaluatedBars: Math.max(0, lastEvaluated - cfg.warmupBars) };
 }
 
-function buildTradeRecord({ instrument, bias, scoring, plan, outcome, barIndex, time }) {
+function buildTradeRecord({ instrument, bias, scoring, plan, outcome, features, barIndex, time }) {
   return {
     instrumentId: instrument.id,
     instrumentKind: instrument.kind,
@@ -106,6 +108,8 @@ function buildTradeRecord({ instrument, bias, scoring, plan, outcome, barIndex, 
     // Sorted so the same combination always produces the same signature.
     confirmations: scoring.fired.map((c) => c.id).sort(),
     confirmationSignature: scoring.fired.map((c) => c.id).sort().join('+'),
+    // Chart patterns and context the learner searches over.
+    features: features || [],
 
     entryPrice: plan.entryPrice,
     stopPrice: plan.stopPrice,

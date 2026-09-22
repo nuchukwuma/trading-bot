@@ -16,8 +16,10 @@
 const config = require('../src/config');
 const { MarketDataService } = require('../src/data');
 const { replayAll } = require('../src/backtest/replay');
-const { analyzeDimensions, selectProfile } = require('../src/backtest/analyze');
+const { analyzeDimensions } = require('../src/backtest/analyze');
 const { EdgeProfile } = require('../src/backtest/edgeProfile');
+const { saveBacktestTrades } = require('../src/learn/ledger');
+const { learn } = require('../src/learn/learner');
 const { randomWalkSeries } = require('../src/backtest/randomWalk');
 const { formatUtc } = require('../src/util/time');
 
@@ -160,9 +162,14 @@ async function main() {
   for (const c of dims.byConfirmation) console.log(row(c.key, c.with));
 
   // ---- the selected profile ----
-  const selection = selectProfile(trades, {
+  // The learner is the same one the live bot re-runs as outcomes accumulate;
+  // the backtest simply gives it its first sample.
+  const selection = learn(trades, {
     minSamples: config.backtest.minSamples,
     trainRatio: config.backtest.trainRatio,
+    tradesPerRule: config.learn.tradesPerRule,
+    maxFeatureRules: config.learn.maxFeatureRules,
+    fdr: config.learn.fdr,
   });
 
   console.log('\n\nSelected profile');
@@ -171,9 +178,27 @@ async function main() {
 
   console.log('\n  Rules:');
   console.log(`    minScore               ${selection.rules.minScore ?? '(none)'}`);
-  console.log(`    requiredConfirmations  ${selection.rules.requiredConfirmations.join(', ') || '(none)'}`);
+  console.log(`    requiredFeatures       ${selection.rules.requiredFeatures.join(', ') || '(none)'}`);
+  console.log(`    excludedFeatures       ${selection.rules.excludedFeatures.join(', ') || '(none)'}`);
   console.log(`    minBiasStrength        ${selection.rules.minBiasStrength || '(none)'}`);
   console.log(`    disabledInstruments    ${selection.rules.disabledInstruments.join(', ') || '(none)'}`);
+  console.log(
+    `\n  Growth: ${selection.growth.trades} trades earns ${selection.growth.featureRuleBudget} feature rule(s), ` +
+      `${selection.growth.featureRulesUsed} used. Next rule unlocks at ${selection.growth.nextRuleAt} trades.`
+  );
+
+  const top = selection.candidates.filter((c) => c.significant).slice(0, 8);
+  if (top.length) {
+    console.log('\n  Features that survived false-discovery control:');
+    for (const c of top) {
+      console.log(
+        `    ${c.feature.padEnd(34)} n=${String(c.with.n).padStart(5)}  ` +
+          `${R(c.with.expectancy)}R vs ${R(c.without.expectancy)}R  p=${c.p.toExponential(1)}`
+      );
+    }
+  } else {
+    console.log('\n  No feature survived false-discovery control.');
+  }
 
   console.log('\n  Performance');
   console.log(HEADER);
@@ -189,6 +214,13 @@ async function main() {
   );
 
   if (!noWrite) {
+    saveBacktestTrades(config.learn.seedPath, trades, {
+      instruments: series.map((s) => s.instrument.id),
+      bars,
+      generatedAt: new Date().toISOString(),
+    });
+    console.log(`\n  Seed ledger: ${trades.length} trades -> ${config.learn.seedPath}`);
+
     const written = EdgeProfile.save(config.edge.profilePath, {
       ...selection,
       meta: {
