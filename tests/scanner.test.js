@@ -235,3 +235,138 @@ test('scanner: persistence can be turned off without affecting delivery', async 
   assert.equal(logged.length, 0);
   assert.equal(result.recordId, null);
 });
+
+test('scanner: per-instrument engine overrides reach the detectors', async () => {
+  // The fixture's displacement candle is 3.2x the average range: it clears the
+  // global 1.5x bar and the Jump indices' 2.5x bar, but not a 4x one.
+  const strict = buildScanner({
+    instruments: [{ ...TEST_INSTRUMENT, engine: { displacement: { bodyMultiple: 4 } } }],
+  });
+  const [tightened] = await strict.scanner.scanAll();
+  const dispCheck = tightened.scoring.confirmations.find((c) => c.id === 'displacement');
+  assert.equal(dispCheck.passed, false);
+  assert.match(dispCheck.reason, /No displacement candle/);
+  assert.equal(tightened.scoring.score, 5, 'one fewer confirmation than the unoverridden run');
+
+  const jumpLike = buildScanner({
+    instruments: [{ ...TEST_INSTRUMENT, engine: { displacement: { bodyMultiple: 2.5 } } }],
+  });
+  const [loosened] = await jumpLike.scanner.scanAll();
+  assert.equal(loosened.scoring.confirmations.find((c) => c.id === 'displacement').passed, true);
+  assert.equal(loosened.scoring.score, 6);
+});
+
+test('scanner: an override never leaks into the next instrument', async () => {
+  const { scanner } = buildScanner({
+    instruments: [
+      { ...TEST_INSTRUMENT, id: 'STRICT', engine: { displacement: { bodyMultiple: 4 } } },
+      { ...TEST_INSTRUMENT, id: 'PLAIN' },
+    ],
+  });
+  const results = await scanner.scanAll();
+  assert.equal(results[0].scoring.score, 5);
+  assert.equal(results[1].scoring.score, 6, 'the second instrument uses the global thresholds');
+});
+
+test('scanner: a Jump index runs the pipeline with its own thresholds', async () => {
+  const jump = {
+    ...TEST_INSTRUMENT,
+    id: 'JUMP75',
+    displayName: 'Jump 75 Index',
+    symbol: 'JD75',
+    subKind: 'jump',
+    slBuffer: { pct: 0.005 }, // 0.5% of a ~99.5 fixture price ~= the 0.5 used elsewhere
+    minLot: 0.01,
+    lotStep: 0.01,
+    engine: {
+      displacement: { bodyMultiple: 2.5 },
+      poi: { fvg: { minGapFactor: 0.35 }, orderBlocks: { displacementBodyMultiple: 2.5 } },
+    },
+  };
+  const { scanner, sent } = buildScanner({ instruments: [jump] });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.fired, true);
+  assert.equal(result.plan.side, 'BUY');
+  assert.ok(Math.abs(result.plan.stopBuffer - 99.5 * 0.005) < 1e-9, 'the pct buffer resolved off the entry price');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].instrument.id, 'JUMP75');
+});
+
+// ---------------------------------------------------------------- edge gate
+const { EdgeProfile } = require('../src/backtest/edgeProfile');
+
+function profileWith(rules, validated = true) {
+  return new EdgeProfile({
+    version: 1,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    validated,
+    rules: {
+      minScore: null,
+      requiredConfirmations: [],
+      minBiasStrength: null,
+      disabledInstruments: [],
+      allowedDirections: null,
+      ...rules,
+    },
+  });
+}
+
+test('scanner: the edge profile blocks a setup that clears every structural gate', async () => {
+  const { scanner, sent, logged } = buildScanner({
+    // The fixture scores 6/6, so a minimum of 7 can never be met.
+    edgeProfile: profileWith({ minScore: 7 }),
+  });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.scoring.score, 6, 'the setup itself was valid');
+  assert.equal(result.plan.valid, true, 'and it cleared the R:R gate');
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'gate:edge');
+  assert.match(result.reason, /below the backtested minimum of 7/);
+  assert.equal(sent.length, 0, 'nothing was sent');
+  assert.equal(logged.length, 0, 'and nothing was logged');
+});
+
+test('scanner: a matching setup passes the edge profile and carries the reason', async () => {
+  const { scanner, sent } = buildScanner({
+    edgeProfile: profileWith({ minScore: 5, requiredConfirmations: ['liquidity_sweep'] }),
+  });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.fired, true);
+  assert.equal(sent[0].edgeProfile.matched, true);
+  assert.equal(sent[0].edgeProfile.active, true);
+  assert.match(sent[0].edgeProfile.reason, /Matches the backtested profile/);
+});
+
+test('scanner: a required confirmation the setup lacks blocks the alert', async () => {
+  // The fixture fires all six, so require something outside that set.
+  const { scanner } = buildScanner({
+    edgeProfile: profileWith({ minScore: 3, requiredConfirmations: ['not_a_real_check'] }),
+  });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.stage, 'gate:edge');
+  assert.match(result.reason, /Missing confirmation/);
+});
+
+test('scanner: an instrument the backtest disabled never alerts', async () => {
+  const { scanner } = buildScanner({ edgeProfile: profileWith({ disabledInstruments: ['TEST'] }) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.stage, 'gate:edge');
+  assert.match(result.reason, /showed no edge in the backtest/);
+});
+
+test('scanner: an unvalidated profile does not filter anything', async () => {
+  const { scanner, sent } = buildScanner({ edgeProfile: profileWith({ minScore: 7 }, false) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, true, 'rules that failed their holdout are not enforced');
+  assert.equal(sent.length, 1);
+});
+
+test('scanner: with no profile at all, behaviour is unchanged', async () => {
+  const { scanner, sent } = buildScanner({ edgeProfile: new EdgeProfile(null) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, true);
+  assert.equal(sent.length, 1);
+});

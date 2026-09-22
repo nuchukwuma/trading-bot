@@ -36,7 +36,10 @@ function buildTradePlan(input) {
   if (stopAnchor === null) {
     return reject('stop', 'No sweep or POI to anchor the stop against');
   }
-  const buffer = Number.isFinite(input.slBuffer) ? input.slBuffer : instrument.slBuffer;
+  const buffer = resolveStopBuffer(input.slBuffer !== undefined ? input.slBuffer : instrument.slBuffer, entryPrice);
+  if (buffer === null) {
+    return reject('config', `Instrument ${instrument.id} has no usable slBuffer`);
+  }
   const stopPrice = bullish ? stopAnchor - buffer : stopAnchor + buffer;
   const riskDistance = Math.abs(entryPrice - stopPrice);
 
@@ -101,6 +104,23 @@ function buildTradePlan(input) {
 }
 
 /**
+ * Resolve a configured stop buffer to price units.
+ *
+ * A plain number is already in price units. `{ pct }` is a fixed fraction of
+ * the entry price, for instruments whose level drifts far enough that an
+ * absolute buffer goes stale. Both are constants for the instrument — neither
+ * looks at recent volatility, so the stop is never ATR-scaled.
+ */
+function resolveStopBuffer(slBuffer, entryPrice) {
+  if (Number.isFinite(slBuffer)) return slBuffer > 0 ? slBuffer : null;
+  if (slBuffer && Number.isFinite(slBuffer.pct) && slBuffer.pct > 0) {
+    const buffer = Math.abs(entryPrice) * slBuffer.pct;
+    return buffer > 0 ? buffer : null;
+  }
+  return null;
+}
+
+/**
  * The stop sits beyond whichever invalidation point is further from entry: the
  * sweep wick (if the setup had one) or the POI's far edge.
  */
@@ -161,6 +181,7 @@ function reject(gate, reason, details = {}) {
 
 module.exports = {
   buildTradePlan,
+  resolveStopBuffer,
   resolveStopAnchor,
   resolveObstacle,
   describeObstacle,

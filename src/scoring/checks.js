@@ -178,6 +178,21 @@ function checkDisplacement(ctx) {
   );
 }
 
+/**
+ * The canonical check ids, in the order the scorer runs them. Declared rather
+ * than derived so other modules (the backtest analyser, stored edge profiles)
+ * can reference them without invoking a check. `tests/scoring.test.js` asserts
+ * this stays in step with what the checks actually return.
+ */
+const CHECK_IDS = [
+  'ltf_structure',
+  'liquidity_sweep',
+  'poi_retrace',
+  'premium_discount',
+  'htf_confluence',
+  'displacement',
+];
+
 const CHECKS = [
   checkStructureAlignment,
   checkLiquiditySweep,
@@ -189,6 +204,7 @@ const CHECKS = [
 
 module.exports = {
   CHECKS,
+  CHECK_IDS,
   checkStructureAlignment,
   checkLiquiditySweep,
   checkPoiRetrace,

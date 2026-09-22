@@ -11,7 +11,9 @@
     "start": "node src/index.js",
     "scan": "node src/index.js --once",
     "test": "node --test \"tests/**/*.test.js\"",
-    "test:watch": "node --test --watch \"tests/**/*.test.js\""
+    "test:watch": "node --test --watch \"tests/**/*.test.js\"",
+    "calibrate": "node scripts/calibrate.js",
+    "backtest": "node scripts/backtest.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

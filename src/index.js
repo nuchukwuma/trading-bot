@@ -26,7 +26,23 @@ async function main() {
   );
   if (config.dryRun) log.warn('DRY_RUN is on — alerts are formatted and logged but not sent');
 
+  const uncalibrated = config.instruments.filter((i) => i.calibrated === false);
+  if (uncalibrated.length) {
+    log.warn(
+      `uncalibrated instrument(s): ${uncalibrated
+        .map((i) => i.id)
+        .join(', ')} — stop buffer and lot constraints are estimates. Run "npm run calibrate".`
+    );
+  }
+
   const scanner = new Scanner();
+  log.info(`edge profile: ${scanner.edgeProfile.describe()}`);
+  if (!scanner.edgeProfile.active) {
+    log.warn(
+      'alerts are NOT filtered by backtested performance — run "npm run backtest" to build a profile, ' +
+        'or set EDGE_PROFILE_REQUIRED=1 to stay silent until one exists'
+    );
+  }
 
   if (config.db.enabled) {
     try {
