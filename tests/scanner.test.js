@@ -1,0 +1,237 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { Scanner } = require('../src/scanner');
+const { bullishFiringScenario, bullishHtfScenario, noise } = require('./helpers/candles');
+
+const TEST_INSTRUMENT = {
+  id: 'TEST',
+  displayName: 'Test Index',
+  source: 'deriv',
+  symbol: 'T',
+  kind: 'synthetic',
+  quoteCurrency: 'USD',
+  pipSize: 1,
+  pricePrecision: 2,
+  contractSize: 1,
+  slBuffer: 0.5,
+  minLot: 0.001,
+  lotStep: 0.001,
+  maxLot: 50,
+  enabled: true,
+};
+
+const ENGINE_OPTS = { structure: { swingLookback: 1, breakOnClose: true } };
+
+/** A data service that hands back fixed series regardless of what is asked. */
+function fakeData({ htf, ltf, oanda = null } = {}) {
+  return {
+    oanda,
+    getBiasAndEntryCandles: async () => ({ htf, ltf }),
+    close() {},
+  };
+}
+
+function buildScanner(overrides = {}) {
+  const sent = [];
+  const logged = [];
+  const scanner = new Scanner({
+    data: fakeData({ htf: bullishHtfScenario(), ltf: bullishFiringScenario() }),
+    alerts: {
+      deliver: async (alert) => {
+        sent.push(alert);
+        return { sent: true, message: 'formatted' };
+      },
+      seedFrom() {},
+    },
+    db: { logAlert: async (a) => { logged.push(a); return { _id: 'rec1' }; } },
+    instruments: [TEST_INSTRUMENT],
+    engineOpts: ENGINE_OPTS,
+    persist: true,
+    ...overrides,
+  });
+  return { scanner, sent, logged };
+}
+
+test('scanner: a qualifying setup runs the whole pipeline and fires', async () => {
+  const { scanner, sent, logged } = buildScanner();
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.fired, true);
+  assert.equal(result.stage, 'alert');
+  assert.equal(result.recordId, 'rec1');
+
+  assert.equal(result.bias.direction, 'bullish');
+  assert.equal(result.scoring.score, 6);
+  assert.equal(result.scoring.passed, true);
+
+  assert.equal(result.plan.valid, true);
+  assert.equal(result.plan.side, 'BUY');
+  assert.equal(result.plan.entryPrice, 99.5);
+  assert.equal(result.plan.stopPrice, 96.5);
+  assert.equal(result.plan.riskReward, 2);
+  assert.equal(result.plan.position.lots, 1);
+  assert.ok(Math.abs(result.plan.position.actualRiskUsd - 3) < 1e-9, 'risks exactly the $3 budget');
+
+  assert.equal(sent.length, 1);
+  assert.equal(logged.length, 1);
+  assert.equal(sent[0].confirmations.length, 6, 'all six reasons travel with the alert');
+  assert.equal(sent[0].allConfirmations.length, 6);
+  assert.ok(sent[0].poiId);
+});
+
+test('scanner: a duplicate is not logged twice', async () => {
+  const logged = [];
+  const { scanner } = buildScanner({
+    alerts: {
+      deliver: async () => ({ sent: false, skipped: 'duplicate', duplicateOf: {} }),
+      seedFrom() {},
+    },
+    db: { logAlert: async (a) => { logged.push(a); return { _id: 'x' }; } },
+  });
+
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'dedup');
+  assert.equal(logged.length, 0, 'a suppressed duplicate is not re-persisted');
+});
+
+test('scanner: no HTF direction stops before any 30m work', async () => {
+  const { scanner, sent } = buildScanner({
+    data: fakeData({ htf: noise(40, 100), ltf: bullishFiringScenario() }),
+  });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'bias');
+  assert.match(result.reason, /no confirmed direction/);
+  assert.equal(result.scoring, undefined);
+  assert.equal(sent.length, 0);
+});
+
+test('scanner: too few confirmations stops before the trade plan', async () => {
+  const { scanner, sent } = buildScanner({
+    // A quiet 30m series under a valid HTF bias: nothing to confirm.
+    data: fakeData({ htf: bullishHtfScenario(), ltf: noise(40, 100) }),
+  });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'confirmations');
+  assert.match(result.reason, /confirmations, 3 required/);
+  assert.ok(result.scoring.score < 3);
+  assert.equal(result.plan, undefined);
+  assert.equal(sent.length, 0);
+});
+
+test('scanner: the R:R gate discards a 6/6 setup when TP1 cannot reach 1:2', async () => {
+  const { scanner, sent } = buildScanner({
+    // A far wider stop buffer makes the same setup fail the R:R gate outright.
+    instruments: [{ ...TEST_INSTRUMENT, slBuffer: 6 }],
+  });
+  const [result] = await scanner.scanAll();
+
+  assert.equal(result.scoring.score, 6, 'every confirmation still fired');
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'gate:risk_reward');
+  assert.match(result.reason, /below the 1:2 minimum/);
+  assert.equal(sent.length, 0, 'the confirmation score does not override the gate');
+});
+
+test('scanner: a data failure is contained to one instrument', async () => {
+  const { scanner } = buildScanner({
+    data: {
+      oanda: null,
+      getBiasAndEntryCandles: async () => {
+        throw new Error('feed unavailable');
+      },
+      close() {},
+    },
+  });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'error');
+  assert.equal(result.reason, 'feed unavailable');
+});
+
+test('scanner: empty candle sets are reported, not thrown', async () => {
+  const { scanner } = buildScanner({ data: fakeData({ htf: [], ltf: [] }) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.stage, 'data');
+  assert.match(result.reason, /No candles/);
+});
+
+test('scanner: every instrument is scanned even when one fails', async () => {
+  let call = 0;
+  const { scanner } = buildScanner({
+    instruments: [TEST_INSTRUMENT, { ...TEST_INSTRUMENT, id: 'TEST2' }],
+    data: {
+      oanda: null,
+      getBiasAndEntryCandles: async () => {
+        call += 1;
+        if (call === 1) throw new Error('boom');
+        return { htf: bullishHtfScenario(), ltf: bullishFiringScenario() };
+      },
+      close() {},
+    },
+  });
+  const results = await scanner.scanAll();
+  assert.equal(results.length, 2);
+  assert.equal(results[0].stage, 'error');
+  assert.equal(results[1].fired, true);
+});
+
+test('scanner: live cross rates are fetched only for pairs that need them', async () => {
+  const asked = [];
+  const oanda = {
+    configured: true,
+    fetchLatestPrice: async (symbol) => {
+      asked.push(symbol);
+      return 155;
+    },
+  };
+  const { scanner } = buildScanner({
+    instruments: [
+      TEST_INSTRUMENT, // USD quote — no conversion needed
+      { ...TEST_INSTRUMENT, id: 'EURUSD', baseCurrency: 'EUR', quoteCurrency: 'USD' },
+      { ...TEST_INSTRUMENT, id: 'USDJPY', baseCurrency: 'USD', quoteCurrency: 'JPY' },
+      { ...TEST_INSTRUMENT, id: 'GBPJPY', baseCurrency: 'GBP', quoteCurrency: 'JPY' },
+    ],
+    data: fakeData({ htf: bullishHtfScenario(), ltf: bullishFiringScenario(), oanda }),
+  });
+
+  const rates = await scanner.fetchRates();
+  assert.deepEqual(asked, ['USD_JPY'], 'only the GBP/JPY cross needs a rate');
+  assert.ok(Math.abs(rates.JPY - 1 / 155) < 1e-12);
+});
+
+test('scanner: a rate lookup failure does not stop the scan', async () => {
+  const oanda = {
+    configured: true,
+    fetchLatestPrice: async () => {
+      throw new Error('rate feed down');
+    },
+  };
+  const { scanner } = buildScanner({
+    instruments: [{ ...TEST_INSTRUMENT, id: 'GBPJPY', baseCurrency: 'GBP', quoteCurrency: 'JPY' }],
+    data: fakeData({ htf: bullishHtfScenario(), ltf: bullishFiringScenario(), oanda }),
+  });
+  assert.deepEqual(await scanner.fetchRates(), {});
+  const results = await scanner.scanAll();
+  assert.equal(results.length, 1);
+});
+
+test('scanner: persistence can be turned off without affecting delivery', async () => {
+  const logged = [];
+  const { scanner, sent } = buildScanner({
+    persist: false,
+    db: { logAlert: async (a) => { logged.push(a); return { _id: 'x' }; } },
+  });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, true);
+  assert.equal(sent.length, 1);
+  assert.equal(logged.length, 0);
+  assert.equal(result.recordId, null);
+});
