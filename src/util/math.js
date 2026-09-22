@@ -5,7 +5,9 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 /** Round to a multiple of `step`, defaulting to floor (never over-risk). */
 function roundToStep(value, step, mode = 'floor') {
   if (!step || step <= 0) return value;
-  const n = value / step;
+  // Binary float dust would make 0.05 / 0.01 come out as 4.999999999999999 and
+  // floor to the wrong step, so normalise the quotient before rounding it.
+  const n = Number((value / step).toFixed(9));
   const rounded = mode === 'ceil' ? Math.ceil(n) : mode === 'round' ? Math.round(n) : Math.floor(n);
   // Re-round to kill binary float dust (0.06999999999 -> 0.07).
   const decimals = decimalsOf(step);

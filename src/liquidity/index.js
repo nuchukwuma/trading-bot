@@ -107,6 +107,8 @@ function detectSweeps(candles, swings, opts = {}) {
         type: group ? group.type : 'wick',
         direction,
         level,
+        // The wick extreme — this is what a protective stop sits beyond.
+        extreme: direction === 'bullish' ? candle.low : candle.high,
         depth,
         index: j,
         time: candle.time,
