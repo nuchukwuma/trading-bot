@@ -53,3 +53,52 @@ function chain(startTime, legs, { tf = 1800, wick = 0.2 } = {}) {
 }
 
 module.exports = { BASE_TIME, c, series, bodyCandle, leg, chain };
+
+/**
+ * `n` low-volatility candles of range 1.0 oscillating around `price`.
+ * Used as a quiet backdrop so displacement/impulse thresholds are meaningful.
+ */
+function noise(n, price = 100, { start = BASE_TIME, tf = 1800 } = {}) {
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    const up = i % 2 === 0;
+    const o = up ? price : price + 0.2;
+    const cl = up ? price + 0.2 : price - 0.2;
+    out.push(c(start + i * tf, o, price + 0.5, price - 0.5, cl));
+  }
+  return out;
+}
+
+module.exports.noise = noise;
+
+/**
+ * A complete bullish 30m fixture:
+ *   10  swing low at 98
+ *   13  swing high at 103
+ *   17  wick sweep below 98 (low 97) closing back inside
+ *   18  bearish order block 98.80-99.80
+ *   19  bullish displacement closing 103.40 -> BOS over 103
+ *   20  leaves a bullish FVG 99.80-102.80
+ *   21-22 shallow retrace back into the FVG, last close 101.50
+ */
+function bullishScenario() {
+  const at = (i) => BASE_TIME + i * 1800;
+  return [
+    ...noise(10, 100),
+    c(at(10), 100, 100.5, 98.0, 99.0),
+    c(at(11), 99.0, 100.0, 98.8, 99.8),
+    c(at(12), 99.8, 101.0, 99.5, 100.8),
+    c(at(13), 100.8, 103.0, 100.5, 102.8),
+    c(at(14), 102.8, 102.9, 101.0, 101.2),
+    c(at(15), 101.2, 101.5, 99.5, 99.8),
+    c(at(16), 99.8, 100.0, 98.5, 99.2),
+    c(at(17), 99.2, 99.5, 97.0, 99.3),
+    c(at(18), 99.3, 99.8, 98.8, 98.9),
+    c(at(19), 98.9, 103.5, 98.8, 103.4),
+    c(at(20), 103.4, 104.0, 102.8, 103.6),
+    c(at(21), 103.6, 103.8, 101.5, 101.7),
+    c(at(22), 101.7, 101.9, 101.4, 101.5),
+  ];
+}
+
+module.exports.bullishScenario = bullishScenario;

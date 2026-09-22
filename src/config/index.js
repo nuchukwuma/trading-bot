@@ -74,6 +74,8 @@ const config = {
   scoring: {
     minConfirmations: num(process.env.MIN_CONFIRMATIONS, 3),
     totalChecks: 6,
+    // A 30m structural shift older than this many candles is stale.
+    maxEventAgeCandles: num(process.env.MAX_EVENT_AGE_CANDLES, 10),
   },
 
   // ---------------- Trade plan ----------------
