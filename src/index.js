@@ -1,5 +1,6 @@
 'use strict';
 
+const http = require('http');
 const config = require('./config');
 const { Scanner } = require('./scanner');
 const { LearningService } = require('./learn');
@@ -18,6 +19,11 @@ const log = createLogger('bot');
  */
 async function main() {
   const runOnce = process.argv.includes('--once');
+
+  // Replit (and most hosts) only treat the app as running once something is
+  // listening on a port. Started first, so the host sees it before the database
+  // connection and the first scan. Skipped for `--once`, which must exit.
+  const keepAlive = runOnce ? null : startKeepAlive();
 
   log.info(
     `starting — ${config.instruments.length} instrument(s): ${config.instruments.map((i) => i.id).join(', ')}`
@@ -79,6 +85,7 @@ async function main() {
     stopping = true;
     log.info(`${signal} received — shutting down`);
     if (timer) clearTimeout(timer);
+    if (keepAlive) keepAlive.close();
     scanner.close();
     await db.disconnect().catch(() => {});
     process.exit(0);
@@ -118,6 +125,18 @@ async function main() {
   scheduleNext();
 }
 
+/**
+ * Minimal HTTP responder so hosting platforms can see the process is up.
+ * A port clash is logged rather than thrown: the bot's real job is scanning,
+ * and an unhandled server error would otherwise take it down.
+ */
+function startKeepAlive(port = process.env.PORT || 3000) {
+  const server = http.createServer((req, res) => res.end('SMC bot alive'));
+  server.on('error', (err) => log.error(`keep-alive server failed on port ${port}: ${err.message}`));
+  server.listen(port, () => log.info(`keep-alive server listening on port ${server.address().port}`));
+  return server;
+}
+
 if (require.main === module) {
   main().catch((err) => {
     log.error('fatal:', err);
@@ -125,4 +144,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main };
+module.exports = { main, startKeepAlive };
