@@ -53,6 +53,13 @@ async function main() {
         for (const s of jumps) console.log(`  ${s.symbol.padEnd(10)} ${s.display_name}`);
         console.log('');
       }
+
+      const forex = symbols.filter((s) => /^frx/.test(s.symbol));
+      if (forex.length) {
+        console.log(`Forex pairs on the feed (${forex.length}):`);
+        console.log(`  ${forex.map((s) => s.symbol).join(' ')}`);
+        console.log('');
+      }
     } catch (err) {
       console.error(`Could not load the Deriv symbol list: ${err.message}\n`);
     }

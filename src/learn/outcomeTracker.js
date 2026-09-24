@@ -18,6 +18,9 @@ const log = createLogger('learn:outcomes');
 async function resolvePending({ db, instrument, candles, opts = {}, now = Date.now() / 1000 }) {
   const maxBars = opts.maxBars || 96;
   const barSeconds = opts.barSeconds || 1800;
+  // How many windows of clock time without a full set of candles before the
+  // feed is treated as dead. Generous, so a long weekend never trips it.
+  const staleFactor = opts.staleFactor || 4;
 
   const pending = await db.pendingAlerts(instrument.id);
   if (!pending.length) return { checked: 0, resolved: 0, stillOpen: 0 };
@@ -29,10 +32,19 @@ async function resolvePending({ db, instrument, candles, opts = {}, now = Date.n
     const signalTime = Math.floor(new Date(doc.candleTime).getTime() / 1000);
     const forward = candles.filter((c) => c.time > signalTime);
 
-    // Not enough history yet to say anything. Leave it alone.
-    const windowClosed = now - signalTime >= maxBars * barSeconds;
-    if (forward.length === 0 || (!windowClosed && forward.length < maxBars)) {
+    // The review window is counted in CANDLES, not clock time. Forex closes for
+    // the weekend: judging a Friday setup on clock time would resolve it on
+    // Monday after 48 hours but only a handful of real candles.
+    const windowFull = forward.length >= maxBars;
+    // Clock time is only a backstop for a feed that has stopped entirely.
+    const feedDead = now - signalTime >= maxBars * barSeconds * staleFactor;
+
+    if (forward.length === 0 && !feedDead) {
       stillOpen += 1;
+      continue;
+    }
+    if (forward.length === 0) {
+      log.warn(`alert ${doc._id}: no candles since the signal after ${staleFactor}x the window — leaving it for review`);
       continue;
     }
 
@@ -49,8 +61,8 @@ async function resolvePending({ db, instrument, candles, opts = {}, now = Date.n
       opts: { maxBars, ...opts.simulator },
     });
 
-    // Still running and the window has not closed: check again next scan.
-    if (outcome.status === 'timeout' && !windowClosed) {
+    // Still running and the window has not filled: check again next scan.
+    if (outcome.status === 'timeout' && !windowFull && !feedDead) {
       stillOpen += 1;
       continue;
     }

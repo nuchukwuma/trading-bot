@@ -192,42 +192,65 @@ test('scanner: every instrument is scanned even when one fails', async () => {
   assert.equal(results[1].fired, true);
 });
 
-test('scanner: live cross rates are fetched only for pairs that need them', async () => {
+function rateFeed({ price = 155, fail = false, configured = true } = {}) {
   const asked = [];
-  const oanda = {
-    configured: true,
-    fetchLatestPrice: async (symbol) => {
-      asked.push(symbol);
-      return 155;
+  const connector = {
+    configured,
+    fetchCandles: async (symbol, tf) => {
+      asked.push({ symbol, tf });
+      if (fail) throw new Error('rate feed down');
+      return [{ time: 1, open: price, high: price, low: price, close: price }];
     },
   };
+  const data = {
+    ...fakeData({ htf: bullishHtfScenario(), ltf: bullishFiringScenario() }),
+    connectorFor: () => connector,
+  };
+  return { data, asked };
+}
+
+const cross = (source) => ({ ...TEST_INSTRUMENT, id: 'GBPJPY', kind: 'forex', baseCurrency: 'GBP', quoteCurrency: 'JPY', source });
+
+test('scanner: live cross rates are fetched only for pairs that need them', async () => {
+  const { data, asked } = rateFeed({ price: 155 });
   const { scanner } = buildScanner({
     instruments: [
-      TEST_INSTRUMENT, // USD quote — no conversion needed
-      { ...TEST_INSTRUMENT, id: 'EURUSD', baseCurrency: 'EUR', quoteCurrency: 'USD' },
-      { ...TEST_INSTRUMENT, id: 'USDJPY', baseCurrency: 'USD', quoteCurrency: 'JPY' },
-      { ...TEST_INSTRUMENT, id: 'GBPJPY', baseCurrency: 'GBP', quoteCurrency: 'JPY' },
+      TEST_INSTRUMENT, // a synthetic — no conversion needed
+      { ...TEST_INSTRUMENT, id: 'EURUSD', kind: 'forex', baseCurrency: 'EUR', quoteCurrency: 'USD', source: 'deriv' },
+      { ...TEST_INSTRUMENT, id: 'USDJPY', kind: 'forex', baseCurrency: 'USD', quoteCurrency: 'JPY', source: 'deriv' },
+      cross('deriv'),
     ],
-    data: fakeData({ htf: bullishHtfScenario(), ltf: bullishFiringScenario(), oanda }),
+    data,
   });
 
   const rates = await scanner.fetchRates();
-  assert.deepEqual(asked, ['USD_JPY'], 'only the GBP/JPY cross needs a rate');
+  assert.deepEqual(asked.map((a) => a.symbol), ['frxUSDJPY'], 'only the GBP/JPY cross needs a rate');
   assert.ok(Math.abs(rates.JPY - 1 / 155) < 1e-12);
 });
 
-test('scanner: a rate lookup failure does not stop the scan', async () => {
-  const oanda = {
-    configured: true,
-    fetchLatestPrice: async () => {
-      throw new Error('rate feed down');
-    },
-  };
-  const { scanner } = buildScanner({
-    instruments: [{ ...TEST_INSTRUMENT, id: 'GBPJPY', baseCurrency: 'GBP', quoteCurrency: 'JPY' }],
-    data: fakeData({ htf: bullishHtfScenario(), ltf: bullishFiringScenario(), oanda }),
-  });
+test('scanner: the rate is read from the same feed as the cross pair', async () => {
+  const deriv = rateFeed();
+  const onDeriv = buildScanner({ instruments: [cross('deriv')], data: deriv.data });
+  await onDeriv.scanner.fetchRates();
+  assert.equal(deriv.asked[0].symbol, 'frxUSDJPY', 'Deriv naming');
+
+  const oanda = rateFeed();
+  const onOanda = buildScanner({ instruments: [cross('oanda')], data: oanda.data });
+  await onOanda.scanner.fetchRates();
+  assert.equal(oanda.asked[0].symbol, 'USD_JPY', 'OANDA naming');
+});
+
+test('scanner: an unconfigured feed is skipped rather than erroring', async () => {
+  const { data, asked } = rateFeed({ configured: false });
+  const { scanner } = buildScanner({ instruments: [cross('oanda')], data });
   assert.deepEqual(await scanner.fetchRates(), {});
+  assert.equal(asked.length, 0);
+});
+
+test('scanner: a rate lookup failure does not stop the scan', async () => {
+  const { data } = rateFeed({ fail: true });
+  const { scanner } = buildScanner({ instruments: [cross('deriv')], data });
+  assert.deepEqual(await scanner.fetchRates(), {}, 'falls back to the configured rate');
   const results = await scanner.scanAll();
   assert.equal(results.length, 1);
 });

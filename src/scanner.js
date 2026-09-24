@@ -203,23 +203,30 @@ class Scanner {
 
   /**
    * Live quote-currency rates for cross pairs (e.g. GBP/JPY needs JPY->USD).
-   * Falls back to the configured rates when the source is unavailable.
+   * Read from the same feed the cross pair itself uses, so it works whichever
+   * forex source is configured. Falls back to the configured static rates when
+   * the lookup fails.
    */
   async fetchRates() {
     const rates = {};
-    const needed = new Set(
-      this.instruments
-        .filter((i) => i.quoteCurrency !== 'USD' && i.baseCurrency !== 'USD')
-        .map((i) => i.quoteCurrency)
+    const crosses = this.instruments.filter(
+      (i) => i.kind === 'forex' && i.quoteCurrency !== 'USD' && i.baseCurrency !== 'USD'
     );
-    if (!needed.size || !this.data.oanda || !this.data.oanda.configured) return rates;
 
-    for (const ccy of needed) {
+    for (const cross of crosses) {
+      const ccy = cross.quoteCurrency;
+      if (rates[ccy]) continue;
+      const symbol = usdPairSymbol(cross.source, ccy);
+      if (!symbol) continue;
+
       try {
-        const price = await this.data.oanda.fetchLatestPrice(`USD_${ccy}`);
-        if (Number.isFinite(price) && price > 0) rates[ccy] = 1 / price;
+        const connector = this.data.connectorFor({ id: `USD${ccy}`, source: cross.source });
+        if (connector.configured === false) continue;
+        const candles = await connector.fetchCandles(symbol, 60, 3);
+        const last = candles[candles.length - 1];
+        if (last && last.close > 0) rates[ccy] = 1 / last.close;
       } catch (err) {
-        log.debug(`no live USD_${ccy} rate: ${err.message}`);
+        log.debug(`no live USD/${ccy} rate from ${cross.source}: ${err.message}`);
       }
     }
     return rates;
@@ -234,6 +241,13 @@ class Scanner {
  * Merge per-instrument engine overrides over the global options, one level deep
  * so a instrument can override a single threshold without restating its section.
  */
+/** The USD/<ccy> symbol on a given feed, following each feed's naming. */
+function usdPairSymbol(source, ccy) {
+  if (source === 'deriv') return `frxUSD${ccy}`;
+  if (source === 'oanda') return `USD_${ccy}`;
+  return null;
+}
+
 function mergeEngineOpts(base = {}, override = {}) {
   if (!override) return { ...base };
   const out = { ...base };
@@ -244,4 +258,4 @@ function mergeEngineOpts(base = {}, override = {}) {
   return out;
 }
 
-module.exports = { Scanner, mergeEngineOpts };
+module.exports = { Scanner, mergeEngineOpts, usdPairSymbol };

@@ -183,3 +183,47 @@ test('overrides: nested sections merge, and no override is a no-op', () => {
 test('overrides: a scalar override replaces rather than merges', () => {
   assert.deepEqual(mergeEngineOpts({ a: { b: 1 } }, { a: 5 }), { a: 5 });
 });
+
+// ------------------------------------------------------- forex source
+const { resolveForexSource, FOREX_SOURCES } = require('../src/config/instruments');
+const { usdPairSymbol } = require('../src/scanner');
+
+const FOREX_IDS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'GBPJPY'];
+
+test('forex: Deriv is the default source, with frx symbols', () => {
+  for (const id of FOREX_IDS) {
+    const i = byId(id);
+    assert.equal(i.source, 'deriv');
+    assert.equal(i.symbol, `frx${id}`);
+    assert.equal(i.marketHours, 'forex', 'forex is flagged as a market that closes');
+  }
+});
+
+test('forex: every pair carries a symbol for every supported feed', () => {
+  for (const id of FOREX_IDS) {
+    for (const source of FOREX_SOURCES) {
+      assert.ok(byId(id).symbols[source], `${id} has no ${source} symbol`);
+    }
+  }
+});
+
+test('forex: switching to OANDA changes only the source and symbol', () => {
+  const deriv = byId('USDJPY');
+  const oanda = resolveForexSource(deriv, 'oanda');
+  assert.equal(oanda.source, 'oanda');
+  assert.equal(oanda.symbol, 'USD_JPY');
+  for (const field of ['pipSize', 'pricePrecision', 'contractSize', 'slBuffer', 'minLot', 'quoteCurrency']) {
+    assert.deepEqual(oanda[field], deriv[field], `${field} must not depend on the feed`);
+  }
+});
+
+test('forex: an unknown source fails loudly instead of silently scanning nothing', () => {
+  assert.throws(() => resolveForexSource(byId('EURUSD'), 'exness'), /FOREX_SOURCE must be one of deriv, oanda/);
+  assert.equal(resolveForexSource(byId('EURUSD'), 'DERIV').source, 'deriv', 'case-insensitive');
+});
+
+test('forex: the USD pair used for cross-rate conversion follows each feed’s naming', () => {
+  assert.equal(usdPairSymbol('deriv', 'JPY'), 'frxUSDJPY');
+  assert.equal(usdPairSymbol('oanda', 'JPY'), 'USD_JPY');
+  assert.equal(usdPairSymbol('nowhere', 'JPY'), null);
+});
