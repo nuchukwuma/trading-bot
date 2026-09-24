@@ -1,7 +1,7 @@
 # SMC Alert Bot
 
 A Smart Money Concepts trading **alert** bot for Deriv synthetic indices (Volatility and Jump)
-and major forex pairs.
+and major forex pairs — all read from Deriv by default, so one free connection covers everything.
 It analyses the market and sends a formatted Telegram alert. **It never places, modifies or closes
 an order** — there is no trade endpoint anywhere in the codebase.
 
@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 276 unit tests, no network or database needed
+npm test                 # 299 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -32,7 +32,8 @@ Set `DRY_RUN=1` to format and log alerts without sending them to Telegram.
 | Variable | What it is |
 | --- | --- |
 | `DERIV_APP_ID` | Deriv app id from https://api.deriv.com. `1089` is the public demo id. No API token is needed — only `ticks_history` is called. |
-| `OANDA_API_KEY` / `OANDA_ACCOUNT_ID` | OANDA v20 practice account (free). Clean candles, generous limits. Only `/candles` is called. |
+| `FOREX_SOURCE` | `deriv` (default) or `oanda`. Deriv needs nothing extra and is available in Nigeria. |
+| `OANDA_API_KEY` / `OANDA_ACCOUNT_ID` | Only with `FOREX_SOURCE=oanda`. OANDA practice accounts are not open in every country. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | From @BotFather, and the chat to post into. |
 | `MONGODB_URI` | Where alerts are logged. Set `DB_ENABLED=0` to run without it. |
 
@@ -274,9 +275,25 @@ outcome and individual confirmation.
 | --- | --- | --- |
 | Volatility indices | Vol 50, Vol 75 | Deriv WebSocket |
 | Jump indices | Jump 10, 25, 50, 75, 100 | Deriv WebSocket |
-| Forex majors | EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, GBP/JPY | OANDA REST |
+| Forex majors | EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, GBP/JPY | Deriv (`frx*`) by default, or OANDA |
 
 Restrict a run with `INSTRUMENTS=JUMP75,EURUSD`, or drop one permanently with `enabled: false`.
+
+### Forex data and your broker
+
+Forex candles come from Deriv's own feed by default. **Exness, and other brokers that are MT4/MT5
+only, publish no candle API** — there is nothing for the bot to connect to without running an MT5
+terminal and a bridge, so they cannot be a source directly.
+
+That is fine for analysis. Market structure, order blocks and FVGs on 30m and 4H read the same
+across feeds. What *can* differ is the exact wick extreme, by a few points, because each broker
+quotes its own liquidity. The sweep detector is wick-sensitive, so if you execute on Exness,
+check the level on your own chart before entering — the alert's levels are Deriv's.
+
+**Forex closes at the weekend; the synthetics do not.** The scanner handles that without
+special-casing: no new candle means no new setup. Outcome tracking counts its review window in
+candles rather than clock hours, so a Friday setup is not resolved on Monday against a handful of
+candles just because 48 hours passed.
 
 ### Jump indices
 

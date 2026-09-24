@@ -511,3 +511,53 @@ test('learner: it says so when a score rule leaves too little to build on', () =
   }
   assert.ok(result.rules.requiredFeatures.length <= 1);
 });
+
+test('outcomes: a weekend gap does not resolve a trade on too few candles', async () => {
+  // Friday setup; the market then closes. By Monday 48+ clock hours have passed
+  // — more than the 96-bar window — but only four real candles exist.
+  const db = fakeDb([PENDING_DOC]);
+  const fridayCandles = Array.from({ length: 4 }, (_, i) => bar(1700001800 + i * 1800, 105, 98, 101));
+  const mondayMorning = 1700000000 + 60 * 3600;
+
+  const result = await resolvePending({
+    db,
+    instrument: { id: 'EURUSD' },
+    candles: fridayCandles,
+    opts: { maxBars: 96, barSeconds: 1800 },
+    now: mondayMorning,
+  });
+
+  assert.equal(result.resolved, 0, 'the window is counted in candles, not clock time');
+  assert.equal(result.stillOpen, 1);
+  assert.equal(db.recorded.length, 0);
+});
+
+test('outcomes: a trade that resolves before the weekend is still recorded', async () => {
+  const db = fakeDb([PENDING_DOC]);
+  // Stops out on the first candle, well before the window fills.
+  const candles = [bar(1700001800, 101, 89, 90)];
+  const result = await resolvePending({
+    db,
+    instrument: { id: 'EURUSD' },
+    candles,
+    opts: { maxBars: 96, barSeconds: 1800 },
+    now: 1700000000 + 60 * 3600,
+  });
+  assert.equal(result.resolved, 1);
+  assert.equal(db.recorded[0].outcome.status, 'stopped');
+});
+
+test('outcomes: a feed that has stopped entirely is eventually closed out', async () => {
+  const db = fakeDb([PENDING_DOC]);
+  const candles = Array.from({ length: 4 }, (_, i) => bar(1700001800 + i * 1800, 105, 98, 101));
+  // Far beyond a long weekend: 4x the window with still only four candles.
+  const result = await resolvePending({
+    db,
+    instrument: { id: 'EURUSD' },
+    candles,
+    opts: { maxBars: 96, barSeconds: 1800, staleFactor: 4 },
+    now: 1700000000 + 96 * 1800 * 5,
+  });
+  assert.equal(result.resolved, 1);
+  assert.equal(db.recorded[0].outcome.status, 'timeout');
+});
