@@ -29,7 +29,10 @@ class DerivConnector {
   }
 
   get url() {
-    return `${this.opts.wsUrl}?app_id=${this.opts.appId}`;
+    // The public endpoint takes no app id; only a custom (legacy-style) URL does.
+    const { wsUrl, appId } = this.opts;
+    if (!appId || wsUrl.includes('/ws/public')) return wsUrl;
+    return `${wsUrl}${wsUrl.includes('?') ? '&' : '?'}app_id=${appId}`;
   }
 
   connect() {

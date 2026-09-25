@@ -15,8 +15,6 @@ services:
         value: ""          # empty = all day; e.g. "6-22" for 06:00-22:00
       - key: KEEP_AWAKE_TZ
         value: Africa/Lagos
-      - key: DERIV_APP_ID
-        value: "1089"
       - key: FOREX_SOURCE
         value: deriv
       - key: TELEGRAM_BOT_TOKEN
