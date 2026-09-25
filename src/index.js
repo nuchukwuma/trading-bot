@@ -12,6 +12,7 @@ const { TelegramControl } = require('./control/telegramBot');
 const { formatTradeEvent, formatOpenTrades, formatResults } = require('./alerts/tradeUpdates');
 const { rateSetup } = require('./learn/rater');
 const { loadBacktestTrades } = require('./learn/ledger');
+const { describeAdjust } = require('./learn/planVariants');
 
 const log = createLogger('bot');
 
@@ -249,6 +250,22 @@ function describeLearning(scanner) {
         `one more is allowed at ${growth.nextRuleAt} trades.`
     );
   }
+  const plan = profile.loaded && profile.data.plan;
+  lines.push('', '<b>Stop and target placement</b>');
+  if (!plan) {
+    lines.push('Default placement — nothing learned yet.');
+  } else {
+    const adopted = Object.values(plan.byGroup || {});
+    if (!adopted.length) lines.push('Default placement everywhere — no alternative has proven better yet.');
+    for (const a of adopted) {
+      lines.push(
+        `📐 ${a.label}: ${describeAdjust(a)} (${a.adjustedR.toFixed(2)}R vs ${a.baselineR.toFixed(2)}R on ${a.testTrades} later trades)`
+      );
+    }
+    for (const n of (plan.notes || []).filter((x) => !/ADOPTED/.test(x))) lines.push(`• ${n}`);
+  }
+  lines.push('');
+
   const minSamples = config.learn.minSamples;
   if (filled.length < minSamples) {
     lines.push(`It starts judging once ${minSamples} trades have resolved.`);

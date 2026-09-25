@@ -3,6 +3,7 @@
 const config = require('../config');
 const { evaluateSetup } = require('../evaluate');
 const { simulateTrade } = require('./simulator');
+const { computeVariants } = require('../learn/planVariants');
 const { AlertDeduplicator } = require('../alerts/dedup');
 const { mergeEngineOpts } = require('../scanner');
 
@@ -84,9 +85,18 @@ function replayInstrument({ instrument, htf, ltf, opts = {} }) {
       opts: opts.simulator || {},
     });
 
-    trades.push(
-      buildTradeRecord({ instrument, bias, scoring, plan, outcome, features, barIndex: i, time: ltf[i].time })
-    );
+    const record = buildTradeRecord({ instrument, bias, scoring, plan, outcome, features, barIndex: i, time: ltf[i].time });
+    // The same setup under other stop/target placements, for the plan learner.
+    record.variants = computeVariants({
+      direction: bias.direction,
+      entryPrice: plan.entryPrice,
+      baseRisk: plan.baseRiskDistance || plan.riskDistance,
+      obstacle: plan.obstacle,
+      candles: ltf.slice(i + 1, i + 1 + cfg.tailBars),
+      signalClose: ltf[i].close,
+      simOpts: opts.simulator || {},
+    });
+    trades.push(record);
   }
 
   return { instrumentId: instrument.id, trades, skipped, evaluatedBars: Math.max(0, lastEvaluated - cfg.warmupBars) };

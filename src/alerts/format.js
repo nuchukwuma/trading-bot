@@ -4,6 +4,7 @@ const config = require('../config');
 const { formatPrice, formatDistance, formatMoney, formatLots } = require('../util/format');
 const { formatUtc } = require('../util/time');
 const { describeRating } = require('../learn/rater');
+const { describeAdjust } = require('../learn/planVariants');
 
 const escapeHtml = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -49,6 +50,15 @@ function formatAlert(alert) {
           : '';
     lines.push(
       `<code>${t.name}    ${price(t.price)}  1:${t.rr.toFixed(2)}  close ${t.closePct}%</code>${escapeHtml(note)}`
+    );
+  }
+  if (plan.adjustment) {
+    const a = plan.adjustment;
+    lines.push(
+      `<i>📐 Learned placement for ${escapeHtml(a.label)}: ${escapeHtml(describeAdjust(a))} — ` +
+        `${a.adjustedR >= 0 ? '+' : ''}${a.adjustedR.toFixed(2)}R vs ${a.baselineR >= 0 ? '+' : ''}${a.baselineR.toFixed(
+          2
+        )}R per setup on ${a.testTrades} later trades</i>`
     );
   }
   if (plan.targets.some((t) => t.cappedBy)) {

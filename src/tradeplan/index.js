@@ -40,11 +40,20 @@ function buildTradePlan(input) {
   if (buffer === null) {
     return reject('config', `Instrument ${instrument.id} has no usable slBuffer`);
   }
-  const stopPrice = bullish ? stopAnchor - buffer : stopAnchor + buffer;
-  const riskDistance = Math.abs(entryPrice - stopPrice);
+  let stopPrice = bullish ? stopAnchor - buffer : stopAnchor + buffer;
+  let riskDistance = Math.abs(entryPrice - stopPrice);
 
   if (!(riskDistance > 0)) {
     return reject('stop', 'Stop landed on the entry price');
+  }
+
+  // A learned placement (src/learn/planLearner.js) moves the stop nearer or
+  // further while the dollar risk stays fixed; the position size follows.
+  const baseRiskDistance = riskDistance;
+  const stopScale = Number.isFinite(cfg.stopScale) && cfg.stopScale > 0 ? cfg.stopScale : 1;
+  if (stopScale !== 1) {
+    riskDistance = baseRiskDistance * stopScale;
+    stopPrice = bullish ? entryPrice - riskDistance : entryPrice + riskDistance;
   }
 
   // ---- targets ----
@@ -89,6 +98,9 @@ function buildTradePlan(input) {
     stopAnchor,
     stopBuffer: buffer,
     riskDistance,
+    // Before any learned stop adjustment — what placement variants scale from.
+    baseRiskDistance,
+    adjustment: cfg.adjustment || null,
     riskDistanceLabel: formatDistance(riskDistance, instrument),
     targets,
     obstacle,

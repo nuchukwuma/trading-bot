@@ -275,3 +275,15 @@ test('profile: a corrupt file does not take the bot down', () => {
   assert.equal(p.loaded, false);
   assert.equal(p.evaluate(SETUP).allow, true);
 });
+
+test('replay: every trade carries its alternative-placement results, baseline equal to its own R', () => {
+  const { BASELINE } = require('../src/learn/planVariants');
+  const { ltf, htf } = randomWalkSeries({ bars: 2500, seed: 11 });
+  const run = replayInstrument({ instrument: INSTRUMENT, htf, ltf, opts: OPTS });
+  assert.ok(run.trades.length > 5);
+  for (const t of run.trades) {
+    assert.equal(Object.keys(t.variants).length, 12);
+    // Uncapped trades replay identically; capped ones differ only by the cap.
+    if (!t.targetCapped) assert.ok(Math.abs(t.variants[BASELINE()] - (t.filled ? t.rMultiple : 0)) < 1e-3);
+  }
+});

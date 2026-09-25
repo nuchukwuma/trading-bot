@@ -57,10 +57,18 @@ function formatTradeEvent(doc, event) {
   const reached = (o.exits || []).map((e) => e.reason).filter((r) => /^TP\d$/.test(r));
   switch (o.status) {
     case 'expired':
-      return [
-        `⚪️ <b>Invalidated</b> — ${title(doc)}`,
-        `Price never came back to the entry at ${price(plan.entryPrice)} within 4 hours (8 candles). No trade — cancel the order if you placed one.`,
-      ].join('\n');
+    case 'cancelled': {
+      const why = {
+        ran_to_target: `Price reached TP1 at ${price(plan.targets[0].price)} without coming back to the entry at ${price(
+          plan.entryPrice
+        )} — the move happened without this trade.`,
+        bias_flip: `The 4H bias turned ${escapeHtml(o.biasNow || 'against it')} before the entry at ${price(
+          plan.entryPrice
+        )} was reached, so the idea behind the setup no longer holds.`,
+        no_fill: `Price never came back to the entry at ${price(plan.entryPrice)} within 4 hours (8 candles).`,
+      }[o.invalidReason || 'no_fill'];
+      return [`⚪️ <b>Invalidated</b> — ${title(doc)}`, why, 'No trade — cancel the order if you placed one.'].join('\n');
+    }
     case 'stopped':
       return [
         `❌ <b>Stopped out</b> — ${title(doc)} at ${price(plan.stopPrice)}`,
@@ -130,11 +138,11 @@ function formatOpenTrades(docs, { shadowCount = 0, nextScanAt = null } = {}) {
 /** /results — recent played-out alerts and the running total. */
 function formatResults(docs, { days }) {
   if (!docs.length) return `No sent alerts have played out in the last ${days} day(s).`;
-  const traded = docs.filter((d) => d.outcome.status !== 'expired');
+  const traded = docs.filter((d) => !['expired', 'cancelled'].includes(d.outcome.status));
   const wins = traded.filter((d) => d.outcome.rMultiple > 0).length;
   const totalR = traded.reduce((a, d) => a + (d.outcome.rMultiple || 0), 0);
   const usd = traded.reduce((a, d) => a + (d.outcome.rMultiple || 0) * (d.tradePlan.riskUsd || 0), 0);
-  const icon = { stopped: '❌', expired: '⚪️', timeout: '⏱' };
+  const icon = { stopped: '❌', expired: '⚪️', cancelled: '⚪️', timeout: '⏱' };
   const lines = [
     `<b>Last ${days} day(s)</b> — ${traded.length} traded, ${docs.length - traded.length} invalidated`,
     traded.length
@@ -144,8 +152,10 @@ function formatResults(docs, { days }) {
   ];
   for (const d of docs.slice(0, 15)) {
     const s = d.outcome.status;
-    const r = s === 'expired' ? 'no fill' : signedR(d.outcome.rMultiple || 0);
-    lines.push(`${icon[s] || '✅'} ${title(d)} — ${s.toUpperCase()} ${r} ${gradeIcon(d)}`);
+    const invalid = s === 'expired' || s === 'cancelled';
+    const label = invalid ? 'INVALIDATED' : s.toUpperCase();
+    const r = invalid ? `(${(d.outcome.invalidReason || 'no_fill').replace(/_/g, ' ')})` : signedR(d.outcome.rMultiple || 0);
+    lines.push(`${icon[s] || '✅'} ${title(d)} — ${label} ${r} ${gradeIcon(d)}`);
   }
   return lines.filter((l, i) => l !== '' || i > 0).join('\n');
 }

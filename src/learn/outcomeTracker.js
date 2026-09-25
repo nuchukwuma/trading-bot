@@ -1,6 +1,7 @@
 'use strict';
 
 const { simulateTrade, SIMULATOR_DEFAULTS } = require('../backtest/simulator');
+const { computeVariants } = require('./planVariants');
 const { createLogger } = require('../util/logger');
 
 const log = createLogger('learn:outcomes');
@@ -15,7 +16,15 @@ const log = createLogger('learn:outcomes');
  * A setup stays PENDING until the market actually resolves it or the review
  * window closes. Marking a still-open trade as a loss would poison the sample.
  */
-async function resolvePending({ db, instrument, candles, opts = {}, now = Date.now() / 1000, onEvent = null }) {
+async function resolvePending({
+  db,
+  instrument,
+  candles,
+  opts = {},
+  now = Date.now() / 1000,
+  onEvent = null,
+  currentBias = null,
+}) {
   const maxBars = opts.maxBars || 96;
   const barSeconds = opts.barSeconds || 1800;
   const fillBars = (opts.simulator && opts.simulator.maxBarsToFill) || SIMULATOR_DEFAULTS.maxBarsToFill;
@@ -75,7 +84,30 @@ async function resolvePending({ db, instrument, candles, opts = {}, now = Date.n
     //    reports that as "expired", which it is not — yet)
     //  - a filled trade whose remainder was marked to the last close, even
     //    if TP1 or TP2 already paid
-    const awaitingFill = !outcome.filled && forward.length < fillBars;
+    const awaitingFill = !outcome.filled && !outcome.invalidReason && forward.length < fillBars;
+
+    // The 4H bias turning against a setup before its entry fills kills the
+    // idea behind it: cancel rather than wait for a fill into the new trend.
+    const biasFlipped =
+      awaitingFill &&
+      currentBias &&
+      ['bullish', 'bearish'].includes(currentBias.direction) &&
+      currentBias.direction !== doc.direction;
+    if (biasFlipped) {
+      const record = {
+        status: 'cancelled',
+        invalidReason: 'bias_flip',
+        rMultiple: 0,
+        barsHeld: 0,
+        mfe: 0,
+        mae: 0,
+        resolvedBy: 'simulator',
+      };
+      await db.recordOutcome(doc._id, record);
+      resolved += 1;
+      await emit(doc, { type: 'closed', outcome: { ...record, exits: [], filled: false, biasNow: currentBias.direction } });
+      continue;
+    }
     const ranOut = outcome.filled && outcome.exits.some((e) => e.reason === 'timeout');
     if ((awaitingFill || (ranOut && !windowFull)) && !feedDead) {
       stillOpen += 1;
@@ -91,6 +123,7 @@ async function resolvePending({ db, instrument, candles, opts = {}, now = Date.n
 
     const record = {
       status: outcome.status,
+      invalidReason: outcome.filled ? undefined : outcome.invalidReason || 'no_fill',
       rMultiple: outcome.rMultiple,
       barsHeld: outcome.barsHeld,
       mfe: outcome.mfe,
@@ -104,6 +137,44 @@ async function resolvePending({ db, instrument, candles, opts = {}, now = Date.n
 
   if (resolved) log.info(`${instrument.id}: resolved ${resolved} setup(s), ${stillOpen} still open`);
   return { checked: pending.length, resolved, stillOpen };
+}
+
+/**
+ * Once a full review window of candles has passed a resolved setup, replay it
+ * under the alternative stop/target placements (planVariants.js) and store the
+ * results — the raw material the plan learner compares placements on.
+ */
+async function recordVariants({ db, instrument, candles, opts = {}, now = Date.now() / 1000 }) {
+  if (!db.alertsNeedingVariants || !candles.length) return 0;
+  const maxBars = opts.maxBars || 96;
+  const barSeconds = opts.barSeconds || 1800;
+  const cutoff = new Date((now - maxBars * barSeconds) * 1000);
+  const docs = await db.alertsNeedingVariants(instrument.id, cutoff);
+  let done = 0;
+  for (const doc of docs) {
+    const signalTime = Math.floor(new Date(doc.candleTime).getTime() / 1000);
+    const p = doc.tradePlan || {};
+    // Older than the candles in hand: it can never be replayed, so mark it
+    // with an empty set instead of asking again every scan.
+    if (signalTime < candles[0].time || !Number.isFinite(p.entryPrice)) {
+      await db.setVariants(doc._id, {});
+      continue;
+    }
+    const forward = candles.filter((c) => c.time > signalTime);
+    if (forward.length < maxBars) continue; // weekend gap: wait for more candles
+    const variants = computeVariants({
+      direction: doc.direction,
+      entryPrice: p.entryPrice,
+      baseRisk: p.baseRiskDistance || p.riskDistance,
+      obstacle: p.obstacle || null,
+      candles: forward.slice(0, maxBars),
+      signalClose: Number.isFinite(doc.price) ? doc.price : p.entryPrice,
+      simOpts: { maxBars, ...opts.simulator },
+    });
+    await db.setVariants(doc._id, variants);
+    done += 1;
+  }
+  return done;
 }
 
 /** Where an open trade stands: filled or not, targets paid, R marked to the last close. */
@@ -140,4 +211,4 @@ function toPlan(doc) {
   };
 }
 
-module.exports = { resolvePending, toPlan, progressOf };
+module.exports = { resolvePending, recordVariants, toPlan, progressOf };

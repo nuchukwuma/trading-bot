@@ -368,3 +368,12 @@ test('alert service: delivery returns the Telegram message id for threading upda
   const out = await svc.deliver(sampleAlert());
   assert.equal(out.messageId, 777);
 });
+
+test('format: an alert on a learned placement says so', () => {
+  const alert = sampleAlert();
+  alert.plan = {
+    ...alert.plan,
+    adjustment: { label: 'Forex', stopScale: 1.25, tp1R: 2.5, adjustedR: 0.42, baselineR: 0.18, testTrades: 64 },
+  };
+  assert.match(formatAlert(alert), /📐 Learned placement for Forex: stop 25% wider, TP1 at 2\.5R .*\+0\.42R vs \+0\.18R per setup on 64 later trades/);
+});

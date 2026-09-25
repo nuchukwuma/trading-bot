@@ -68,6 +68,8 @@ function toDocument(alert, { delivered = false, shadow = false } = {}) {
       riskReward: plan.riskReward,
       targets: plan.targets,
       obstacle: plan.obstacle || undefined,
+      baseRiskDistance: plan.baseRiskDistance,
+      adjustment: plan.adjustment || undefined,
       lots: plan.position.lots,
       riskUsd: plan.position.actualRiskUsd,
       accountBalance: config.risk.accountBalance,
@@ -122,6 +124,25 @@ async function recentAlerts({ sinceMinutes = config.alerts.dedup.ttlMinutes, lim
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();
+}
+
+/** Resolved setups old enough to replay under alternative placements. */
+async function alertsNeedingVariants(instrumentId, before, { limit = 100 } = {}) {
+  if (!isConnected()) return [];
+  return Alert.find({
+    instrumentId,
+    'outcome.status': { $ne: 'pending' },
+    variants: { $exists: false },
+    candleTime: { $lte: before },
+  })
+    .sort({ candleTime: 1 })
+    .limit(limit)
+    .lean();
+}
+
+async function setVariants(alertId, variants) {
+  if (!isConnected()) return null;
+  return Alert.updateOne({ _id: alertId }, { $set: { variants } });
 }
 
 async function updateProgress(alertId, progress) {
@@ -189,6 +210,8 @@ async function setSetting(key, value) {
 }
 
 module.exports = {
+  alertsNeedingVariants,
+  setVariants,
   updateProgress,
   openAlerts,
   closedAlerts,

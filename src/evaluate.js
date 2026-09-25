@@ -5,6 +5,7 @@ const { computeBias } = require('./structure/bias');
 const { scoreSetup } = require('./scoring');
 const { buildTradePlan } = require('./tradeplan');
 const { extractFeatures } = require('./features');
+const { scaledLadder } = require('./learn/planVariants');
 
 /**
  * Evaluate one instrument at one moment in time.
@@ -20,7 +21,7 @@ const { extractFeatures } = require('./features');
  *
  * @returns {{ ok: boolean, stage: string, reason?: string, bias, scoring, plan }}
  */
-function evaluateSetup({ instrument, htf, ltf, engineOpts = {}, rates = {} }) {
+function evaluateSetup({ instrument, htf, ltf, engineOpts = {}, rates = {}, planAdjust = null }) {
   if (!htf || !ltf || !htf.length || !ltf.length) {
     return { ok: false, stage: 'data', reason: 'No candles available' };
   }
@@ -63,7 +64,14 @@ function evaluateSetup({ instrument, htf, ltf, engineOpts = {}, rates = {} }) {
     // the way back out is the setup working, not an obstacle to it.
     opposingPois: bias.pois || [],
     rates,
-    opts: engineOpts.tradePlan,
+    opts: planAdjust
+      ? {
+          ...(engineOpts.tradePlan || {}),
+          stopScale: planAdjust.stopScale,
+          targets: scaledLadder(planAdjust.tp1R),
+          adjustment: planAdjust,
+        }
+      : engineOpts.tradePlan,
   });
 
   if (!plan.valid) {
