@@ -385,3 +385,16 @@ test('plan: a learned stop scale moves the stop and targets but keeps the dollar
   assert.ok(wider.position.lots < base.position.lots, 'a wider stop means a smaller size');
   assert.ok(Math.abs(wider.position.actualRiskUsd - base.position.actualRiskUsd) < 0.5);
 });
+
+test('plan: a stop that would sit on the wrong side of the entry is rejected', () => {
+  const plan = buildTradePlan({
+    instrument: VOL75,
+    direction: 'bullish',
+    entryPrice: 100000,
+    // The only anchor is ABOVE the buy entry.
+    poi: { direction: 'bullish', top: 100600, bottom: 100500 },
+  });
+  assert.equal(plan.valid, false);
+  assert.equal(plan.gate, 'stop');
+  assert.match(plan.reason, /wrong side/);
+});
