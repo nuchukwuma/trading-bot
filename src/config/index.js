@@ -112,8 +112,15 @@ const config = {
   // ---------------- Alerts ----------------
   alerts: {
     telegram: {
-      botToken: process.env.TELEGRAM_BOT_TOKEN || '',
-      chatId: process.env.TELEGRAM_CHAT_ID || '',
+      // Pasted values often carry spaces, quotes or a "bot" prefix copied from
+      // the API URL; any of those makes Telegram answer 401.
+      botToken: String(process.env.TELEGRAM_BOT_TOKEN || '')
+        .trim()
+        .replace(/^['"]|['"]$/g, '')
+        .replace(/^bot(?=\d)/, ''),
+      chatId: String(process.env.TELEGRAM_CHAT_ID || '')
+        .trim()
+        .replace(/^['"]|['"]$/g, ''),
       apiUrl: process.env.TELEGRAM_API_URL || 'https://api.telegram.org',
       parseMode: 'HTML',
     },
