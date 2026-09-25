@@ -17,6 +17,8 @@ const HELP = [
   '/results — how recent alerts played out (/results 30 for 30 days)',
   '/learning — what the bot has learned so far',
   '/insights — what worked in the last backtest',
+  '/playbook — the winning combination per pair (/playbook EURUSD for one pair)',
+  '/playbook only — on pairs with a proven playbook, send only matching setups (/playbook all to undo)',
   '/backtest — re-run the backtest now (/backtest 180 for 180 days)',
   '/status — last scan, next scan, what is on',
   '/scan — run a scan now',
@@ -71,6 +73,7 @@ class TelegramControl {
           { command: 'results', description: 'How recent alerts played out' },
           { command: 'learning', description: 'What the bot has learned so far' },
           { command: 'insights', description: 'What worked in the last backtest' },
+          { command: 'playbook', description: 'Winning combinations per pair' },
           { command: 'backtest', description: 'Re-run the backtest now' },
           { command: 'status', description: 'Last scan, next scan, what is on' },
           { command: 'scan', description: 'Run a scan now' },
@@ -176,6 +179,20 @@ class TelegramControl {
         return reply(await this._report('learning'));
       case '/insights':
         return reply(await this._report('insights'));
+      case '/playbook': {
+        const arg = (args[0] || '').toLowerCase();
+        if (arg === 'only' || arg === 'all') {
+          await this.settings.setPlaybookOnly(arg === 'only');
+          return reply(
+            arg === 'only'
+              ? '🎯 Playbook-only: on pairs with a proven playbook, only setups matching it are sent. Pairs without one send as before. /playbook all to undo.'
+              : '✅ Every setup that passes the rules is sent again (proven playbook matches are still marked).'
+          );
+        }
+        const inst = arg ? this.settings.find(arg) : null;
+        if (arg && !inst) return reply(`Not recognised: ${escape(args[0])}`);
+        return reply(await this._report('playbook', inst ? inst.id : null));
+      }
       case '/backtest': {
         const days = Math.min(Math.max(parseInt(args[0], 10) || 365, 30), 730);
         const text = await this._report('backtest', days);
@@ -295,6 +312,7 @@ class TelegramControl {
     return [
       '<b>Status</b>',
       this.settings.paused ? '⏸ Alerts paused' : '▶️ Alerts on',
+      this.settings.playbookOnly ? '🎯 Playbook-only mode' : null,
       `Last scan: ${fmt(s.lastScanAt)}${s.scans ? ` (${s.scans} since start)` : ''}`,
       `Next scan: ${fmt(s.nextScanAt)}`,
       `On (${on.length}): ${on.join(', ') || 'none'}`,

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { matchesRules, hasFeature } = require('./analyze');
 const { adjustmentFor } = require('../learn/planLearner');
+const { matchPlaybook } = require('../learn/playbook');
 const { createLogger } = require('../util/logger');
 
 const log = createLogger('edge-profile');
@@ -45,7 +46,7 @@ class EdgeProfile {
   }
 
   /** The stored shape of a learner result. */
-  static build({ rules, validated, notes, train, test, unfilteredTest, plan = null, meta = {} }) {
+  static build({ rules, validated, notes, train, test, unfilteredTest, plan = null, playbook = null, meta = {} }) {
     return {
       version: PROFILE_VERSION,
       generatedAt: new Date().toISOString(),
@@ -55,6 +56,8 @@ class EdgeProfile {
       // Each entry was validated on its own, so it applies even when the
       // setup filter above has not been validated yet.
       plan,
+      // Per-pair winning combinations (learn/playbook.js).
+      playbook,
       notes,
       performance: { train, test, unfilteredTest },
       meta,
@@ -80,6 +83,11 @@ class EdgeProfile {
   get active() {
     if (!this.loaded) return false;
     return this.validated || this.enforceUnvalidated;
+  }
+
+  /** Playbook combinations this setup matches on its pair. */
+  playbookMatch(instrumentId, features) {
+    return matchPlaybook(this.data && this.data.playbook, instrumentId, features);
   }
 
   /** The learned stop/target placement for an instrument, or null for the default. */

@@ -23,6 +23,8 @@ class AlertSettings {
     this.db = db;
     this.muted = new Set();
     this.paused = false;
+    // On pairs with a proven playbook, only send setups that match it.
+    this.playbookOnly = false;
   }
 
   async load() {
@@ -33,6 +35,7 @@ class AlertSettings {
         const known = new Set(this.instruments.map((i) => i.id));
         this.muted = new Set((saved.muted || []).filter((id) => known.has(id)));
         this.paused = Boolean(saved.paused);
+        this.playbookOnly = Boolean(saved.playbookOnly);
       }
     } catch (err) {
       log.warn(`could not load alert settings: ${err.message}`);
@@ -43,7 +46,7 @@ class AlertSettings {
   async save() {
     if (!this.db) return;
     try {
-      await this.db.setSetting(KEY, { muted: [...this.muted], paused: this.paused });
+      await this.db.setSetting(KEY, { muted: [...this.muted], paused: this.paused, playbookOnly: this.playbookOnly });
     } catch (err) {
       log.warn(`could not save alert settings: ${err.message}`);
     }
@@ -79,6 +82,11 @@ class AlertSettings {
 
   async setPaused(paused) {
     this.paused = Boolean(paused);
+    await this.save();
+  }
+
+  async setPlaybookOnly(on) {
+    this.playbookOnly = Boolean(on);
     await this.save();
   }
 

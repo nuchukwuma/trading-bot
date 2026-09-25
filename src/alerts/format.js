@@ -5,6 +5,7 @@ const { formatPrice, formatDistance, formatMoney, formatLots } = require('../uti
 const { formatUtc } = require('../util/time');
 const { describeRating } = require('../learn/rater');
 const { describeAdjust } = require('../learn/planVariants');
+const { label: conditionLabel } = require('../backtest/insights');
 
 const escapeHtml = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -30,6 +31,10 @@ function formatAlert(alert) {
       bias.strength
     )})</i>`
   );
+  for (const line of describePlaybook(alert)) {
+    lines.push('');
+    lines.push(line);
+  }
   const rating = describeRating(alert.rating);
   if (rating.length) {
     lines.push('');
@@ -115,6 +120,23 @@ function formatAlert(alert) {
   lines.push('<i>Analysis only — this bot places no orders.</i>');
 
   return lines.join('\n');
+}
+
+/** The playbook combination(s) this setup matches on its pair. */
+function describePlaybook(alert) {
+  const pb = alert.playbook;
+  if (!pb || !pb.matches || !pb.matches.length) return [];
+  const id = escapeHtml(alert.instrument.id);
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  return pb.matches.slice(0, 1).map((m) => {
+    const head = m.status === 'proven' ? `🎯 <b>${id} playbook match</b>` : `👀 <b>Watched ${id} combination</b> (not proven yet)`;
+    const live = m.live && m.live.n ? `, live ${m.live.wins}/${m.live.n}` : '';
+    return (
+      `${head}: ${escapeHtml(conditionLabel(m.combo))}\n` +
+      `<i>won ${pct(m.overall.winRate)} of ${m.overall.n} (avg ${m.overall.avgR >= 0 ? '+' : ''}${m.overall.avgR.toFixed(2)}R${live}) · ` +
+      `${id} normally wins ${pct(pb.baseline.winRate)}</i>`
+    );
+  });
 }
 
 /** One-line version for logs and console output. */

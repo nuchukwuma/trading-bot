@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 355 unit tests, no network or database needed
+npm test                 # 366 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -55,6 +55,7 @@ messages from anyone else are ignored.
 | `/trades` | Trades running (with live R) or waiting for their entry |
 | `/results 30` | How sent alerts played out over the last N days (default 7): wins, R, dollars |
 | `/learning` | How many trades it has learned from, what it filters on, and any learned stop/target placement |
+| `/playbook` | Each pair's winning combinations (`/playbook EURUSD`, `/playbook only`, `/playbook all`) |
 | `/insights` | The last backtest's report: what worked, what to avoid, what is only promising |
 | `/backtest 365` | Re-run the backtest now over N days (default 365) |
 
@@ -72,6 +73,29 @@ replies to the original alert — whether you took the trade or not:
   - the 4H bias flipped against the setup before the entry filled
 
 The figures assume the plan was followed exactly as sent. They are also what the learner trains on.
+
+### The per-pair playbook
+
+What works on EURUSD need not work on Jump 75, so each pair gets its own playbook — the
+combinations of conditions that win most often ON THAT PAIR:
+
+1. **Search** — on the earlier 70% of the pair's trades, every condition alone, in pairs and in
+   threes is ranked by the pessimistic (95% lower) end of its win rate, so 9 wins from 10 cannot
+   outrank 60 from 80. Only combinations that also made money on average count, and each condition
+   in a combination must itself make a significant difference — "a real edge plus noise" is
+   dropped in favour of the real edge.
+2. **Check** — the best five are tested on the later 30% they never saw. Searching thousands of
+   combinations guarantees some look brilliant by chance; only ones that also beat the pair's usual
+   win rate there (at 99%) are marked 🎯 **proven**. The rest are 👀 **watched**.
+3. **Monitor** — live results are kept apart. A proven combination whose live record falls clearly
+   below the pair's usual win rate is 🚫 **retired** (and stays retired); a watched one that proves
+   itself live is promoted.
+
+It is rebuilt after every backtest and every batch of live results. An alert that matches a proven
+combination says so (🎯, with its record and the pair's usual win rate) and is sent even if the
+all-pairs filter would have held it. `/playbook` shows every pair's best combination,
+`/playbook EURUSD` one pair in detail, and `/playbook only` switches to sending, on pairs that have
+a proven playbook, only the setups that match it (`/playbook all` to undo).
 
 ### Learning where the stop and targets go
 

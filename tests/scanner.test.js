@@ -433,3 +433,65 @@ test('scanner: pausing holds every alert back', async () => {
   assert.match(result.reason, /paused/);
   assert.equal(sent.length, 0);
 });
+
+// ------------------------------------------------------------ playbook
+function playbookProfile({ rules = {}, combo, status = 'proven' }) {
+  const p = profileWith(rules);
+  p.data.playbook = {
+    pairs: {
+      TEST: {
+        trades: 200,
+        baseline: { n: 200, wins: 70, winRate: 0.35, avgR: 0.05 },
+        combos: [
+          {
+            combo,
+            status,
+            overall: { n: 40, wins: 30, winRate: 0.75, avgR: 1.2 },
+            live: { n: 6, wins: 5, winRate: 0.83, avgR: 1.5 },
+          },
+        ],
+      },
+    },
+  };
+  return p;
+}
+
+async function firstFeatures() {
+  const { scanner } = buildScanner({ edgeProfile: new EdgeProfile(null) });
+  const [r] = await scanner.scanAll();
+  return r.alert.features;
+}
+
+test('scanner: a proven playbook match is sent, and labelled, even when the all-pairs filter would hold it', async () => {
+  const features = await firstFeatures();
+  const { scanner, sent } = buildScanner({ edgeProfile: playbookProfile({ rules: { minScore: 7 }, combo: features[0] }) });
+  const [r] = await scanner.scanAll();
+  assert.equal(r.fired, true);
+  assert.match(sent[0], /🎯 <b>TEST playbook match<\/b>/);
+  assert.match(sent[0], /won 75% of 40 \(avg \+1\.20R, live 5\/6\) · TEST normally wins 35%/);
+});
+
+test('scanner: playbook-only mode holds back setups that miss a pair\'s proven playbook', async () => {
+  const settings = new AlertSettings({ instruments: [TEST_INSTRUMENT] });
+  await settings.setPlaybookOnly(true);
+  const { scanner, sent, logged } = buildScanner({
+    settings,
+    edgeProfile: playbookProfile({ combo: 'pattern:never_seen' }),
+  });
+  const [r] = await scanner.scanAll();
+  assert.equal(r.stage, 'playbook');
+  assert.equal(sent.length, 0);
+  assert.equal(logged[0].shadow, true, 'still tracked for learning');
+});
+
+test('scanner: playbook-only mode leaves pairs without a proven playbook alone', async () => {
+  const settings = new AlertSettings({ instruments: [TEST_INSTRUMENT] });
+  await settings.setPlaybookOnly(true);
+  const { scanner, sent } = buildScanner({
+    settings,
+    edgeProfile: playbookProfile({ combo: 'pattern:never_seen', status: 'watching' }),
+  });
+  const [r] = await scanner.scanAll();
+  assert.equal(r.fired, true);
+  assert.equal(sent.length, 1);
+});

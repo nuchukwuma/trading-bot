@@ -51,6 +51,46 @@ function label(token) {
 }
 
 const R = (n) => `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(2)}R`;
+const PCT = (x) => `${Math.round(x * 100)}%`;
+const STATUS = { proven: '🎯', watching: '👀', retired: '🚫' };
+
+/** /playbook — one pair in detail, or every pair's best proven combination. */
+function formatPlaybook(playbook, pairId = null) {
+  const pairs = (playbook && playbook.pairs) || {};
+  const ids = Object.keys(pairs).sort();
+  if (!ids.length) return 'No playbook yet — each pair needs about 60 resolved trades. A backtest (/backtest) builds one.';
+
+  if (pairId) {
+    const p = pairs[pairId];
+    if (!p) return `${pairId} has no playbook yet (not enough trades).`;
+    const lines = [`<b>${pairId} playbook</b> — ${p.trades} trades, normally wins ${PCT(p.baseline.winRate)} (avg ${R(p.baseline.avgR)})`];
+    if (!p.combos.length) lines.push('No combination beat the normal win rate convincingly.');
+    for (const c of p.combos) {
+      lines.push('');
+      lines.push(`${STATUS[c.status]} <b>${label(c.combo)}</b> — ${c.status}`);
+      lines.push(
+        `won ${PCT(c.overall.winRate)} of ${c.overall.n} · avg ${R(c.overall.avgR)} ` +
+          `(search ${c.search.wins}/${c.search.n}, check ${c.check.wins}/${c.check.n}, live ${c.live.wins}/${c.live.n})`
+      );
+    }
+    return lines.join('\n');
+  }
+
+  const lines = ['<b>Playbook</b> — best combination per pair (🎯 proven, 👀 watched)'];
+  for (const id of ids) {
+    const p = pairs[id];
+    const best = p.combos.find((c) => c.status === 'proven') || p.combos.find((c) => c.status === 'watching');
+    if (!best) {
+      lines.push(`▫️ ${id}: nothing beats its normal ${PCT(p.baseline.winRate)} yet`);
+      continue;
+    }
+    lines.push(
+      `${STATUS[best.status]} ${id}: ${label(best.combo)} — won ${PCT(best.overall.winRate)} of ${best.overall.n} vs ${PCT(p.baseline.winRate)} normally`
+    );
+  }
+  lines.push('', '<i>/playbook EURUSD for one pair · /playbook only to send just proven matches on those pairs · /playbook all to undo</i>');
+  return lines.join('\n');
+}
 
 function buildReport({ trades, result, days, coverage = [] }) {
   const all = summarize(trades);
@@ -117,8 +157,12 @@ function buildReport({ trades, result, days, coverage = [] }) {
     for (const a of adopted) lines.push(`📐 ${a.label}: ${describeAdjust(a)} (${R(a.adjustedR)} vs ${R(a.baselineR)})`);
   }
 
+  if (result && result.playbook) {
+    lines.push('', formatPlaybook(result.playbook).replace(/\n\n<i>\/playbook[\s\S]*$/, ''));
+  }
+
   lines.push('', '<i>Figures follow each plan exactly as it would have been sent. Past results are no guarantee.</i>');
   return lines.join('\n');
 }
 
-module.exports = { buildReport, label };
+module.exports = { buildReport, label, formatPlaybook };

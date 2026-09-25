@@ -152,3 +152,19 @@ test('control: /trades, /results and /learning use the reports, or explain witho
   await say('/learning');
   assert.equal(sent.at(-1).text, 'LEARNING');
 });
+
+test('control: /playbook shows the playbook, one pair, or switches playbook-only mode', async () => {
+  const { settings, control, sent, say } = build();
+  const asked = [];
+  control.reports = { playbook: async (id) => (asked.push(id), `PB ${id}`) };
+  await say('/playbook');
+  await say('/playbook eurusd');
+  assert.deepEqual(asked, [null, 'EURUSD']);
+  await say('/playbook only');
+  assert.equal(settings.playbookOnly, true);
+  assert.match(sent.at(-1).text, /Playbook-only/);
+  await say('/playbook all');
+  assert.equal(settings.playbookOnly, false);
+  await say('/playbook nope');
+  assert.match(sent.at(-1).text, /Not recognised/);
+});

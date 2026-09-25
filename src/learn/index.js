@@ -102,8 +102,8 @@ class LearningService {
       return null;
     }
 
-    const result = learn(trades, this.cfg);
     const previous = this.profile || (await this.loadProfile());
+    const result = learn(trades, { ...this.cfg, previousPlaybook: previous.data && previous.data.playbook });
 
     this.profile = await saveProfile({
       db: this.db,
