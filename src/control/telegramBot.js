@@ -16,6 +16,8 @@ const HELP = [
   '/trades — trades running or waiting for entry',
   '/results — how recent alerts played out (/results 30 for 30 days)',
   '/learning — what the bot has learned so far',
+  '/insights — what worked in the last backtest',
+  '/backtest — re-run the backtest now (/backtest 180 for 180 days)',
   '/status — last scan, next scan, what is on',
   '/scan — run a scan now',
   '',
@@ -68,6 +70,8 @@ class TelegramControl {
           { command: 'trades', description: 'Trades running or waiting for entry' },
           { command: 'results', description: 'How recent alerts played out' },
           { command: 'learning', description: 'What the bot has learned so far' },
+          { command: 'insights', description: 'What worked in the last backtest' },
+          { command: 'backtest', description: 'Re-run the backtest now' },
           { command: 'status', description: 'Last scan, next scan, what is on' },
           { command: 'scan', description: 'Run a scan now' },
           { command: 'pause', description: 'Stop all alerts' },
@@ -170,6 +174,13 @@ class TelegramControl {
       }
       case '/learning':
         return reply(await this._report('learning'));
+      case '/insights':
+        return reply(await this._report('insights'));
+      case '/backtest': {
+        const days = Math.min(Math.max(parseInt(args[0], 10) || 365, 30), 730);
+        const text = await this._report('backtest', days);
+        return text ? reply(text) : null;
+      }
       default:
         return reply('Unknown command. /help lists them.');
     }

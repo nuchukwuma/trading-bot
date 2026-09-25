@@ -192,6 +192,10 @@ const config = {
 
   // ---------------- Backtest ----------------
   backtest: {
+    // The bot's own backtest on the server (src/backtest/runner.js).
+    auto: bool(process.env.BACKTEST_AUTO, true),
+    days: num(process.env.BACKTEST_DAYS, 365),
+    refreshDays: num(process.env.BACKTEST_REFRESH_DAYS, 7),
     candles: num(process.env.BACKTEST_CANDLES, 5000),
     warmupBars: num(process.env.BACKTEST_WARMUP_BARS, 120),
     tailBars: num(process.env.BACKTEST_TAIL_BARS, 96),
