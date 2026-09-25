@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 303 unit tests, no network or database needed
+npm test                 # 306 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit

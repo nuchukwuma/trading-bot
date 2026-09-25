@@ -68,7 +68,10 @@ function startServer({ port, getStatus = () => ({}) }) {
     }
     res.writeHead(404).end();
   });
-  server.listen(port, () => log.info(`listening on port ${port}`));
+  // A port clash is logged rather than thrown: the bot's real job is
+  // scanning, and an unhandled server error would otherwise take it down.
+  server.on('error', (err) => log.error(`HTTP server failed on port ${port}: ${err.message}`));
+  server.listen(port, () => log.info(`listening on port ${server.address().port}`));
   return server;
 }
 

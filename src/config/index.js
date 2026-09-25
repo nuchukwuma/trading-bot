@@ -206,8 +206,8 @@ const config = {
 
   // ---------------- Web service (Render) ----------------
   server: {
-    // Render sets PORT on web services. Unset = no HTTP server (local runs).
-    port: process.env.PORT ? num(process.env.PORT, 10000) : null,
+    // Render and Replit set PORT. The server always runs outside `--once`.
+    port: num(process.env.PORT, 3000),
     keepAwake: {
       enabled: bool(process.env.KEEP_AWAKE, true),
       // Render sets RENDER_EXTERNAL_URL itself; KEEP_AWAKE_URL overrides it.

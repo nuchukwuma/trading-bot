@@ -21,11 +21,13 @@ async function main() {
   const runOnce = process.argv.includes('--once');
   const status = { lastScanAt: null, lastScanMs: null, nextScanAt: null, scans: 0 };
 
-  // Bind the port first: Render fails a deploy whose port is not open soon
-  // after start, and the first scan can take a while.
+  // Hosts (Render, Replit) only treat the app as running once something is
+  // listening on a port, and Render fails a deploy whose port does not open
+  // soon after start. Started first, before the database and the first scan.
+  // Skipped for `--once`, which must exit.
   let server = null;
   let keepAwake = null;
-  if (!runOnce && config.server.port) {
+  if (!runOnce) {
     server = startServer({
       port: config.server.port,
       getStatus: () => ({ instruments: config.instruments.map((i) => i.id), ...status }),
