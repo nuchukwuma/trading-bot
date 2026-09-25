@@ -1,0 +1,27 @@
+# Render blueprint — a free web service. The bot only needs a web service for
+# the open port; the HTTP server is just a status page and health check.
+services:
+  - type: web
+    name: smc-alert-bot
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: KEEP_AWAKE_HOURS
+        value: ""          # empty = all day; e.g. "6-22" for 06:00-22:00
+      - key: KEEP_AWAKE_TZ
+        value: Africa/Lagos
+      - key: DERIV_APP_ID
+        value: "1089"
+      - key: FOREX_SOURCE
+        value: deriv
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: MONGODB_URI
+        sync: false

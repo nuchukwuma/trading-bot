@@ -1,12 +1,12 @@
 'use strict';
 
-const http = require('http');
 const config = require('./config');
 const { Scanner } = require('./scanner');
 const { LearningService } = require('./learn');
 const db = require('./db');
 const { createLogger } = require('./util/logger');
 const { msUntilNextBoundary, formatUtc } = require('./util/time');
+const { parseHours, startServer, startKeepAwake } = require('./server');
 
 const log = createLogger('bot');
 
@@ -19,11 +19,31 @@ const log = createLogger('bot');
  */
 async function main() {
   const runOnce = process.argv.includes('--once');
+  const status = { lastScanAt: null, lastScanMs: null, nextScanAt: null, scans: 0 };
 
-  // Replit (and most hosts) only treat the app as running once something is
-  // listening on a port. Started first, so the host sees it before the database
-  // connection and the first scan. Skipped for `--once`, which must exit.
-  const keepAlive = runOnce ? null : startKeepAlive();
+  // Hosts (Render, Replit) only treat the app as running once something is
+  // listening on a port, and Render fails a deploy whose port does not open
+  // soon after start. Started first, before the database and the first scan.
+  // Skipped for `--once`, which must exit.
+  let server = null;
+  let keepAwake = null;
+  if (!runOnce) {
+    server = startServer({
+      port: config.server.port,
+      getStatus: () => ({ instruments: config.instruments.map((i) => i.id), ...status }),
+    });
+    const ka = config.server.keepAwake;
+    if (ka.enabled && ka.url) {
+      keepAwake = startKeepAwake({
+        url: ka.url,
+        intervalMs: ka.intervalMinutes * 60 * 1000,
+        window: parseHours(ka.hours),
+        tz: ka.tz,
+      });
+    } else if (ka.enabled) {
+      log.warn('keep-awake has no URL — set KEEP_AWAKE_URL (Render provides RENDER_EXTERNAL_URL itself)');
+    }
+  }
 
   log.info(
     `starting — ${config.instruments.length} instrument(s): ${config.instruments.map((i) => i.id).join(', ')}`
@@ -85,7 +105,8 @@ async function main() {
     stopping = true;
     log.info(`${signal} received — shutting down`);
     if (timer) clearTimeout(timer);
-    if (keepAlive) keepAlive.close();
+    if (keepAwake) keepAwake.stop();
+    if (server) server.close();
     scanner.close();
     await db.disconnect().catch(() => {});
     process.exit(0);
@@ -100,7 +121,10 @@ async function main() {
     } catch (err) {
       log.error(`scan pass failed: ${err.message}`);
     }
-    log.debug(`scan took ${Date.now() - started}ms`);
+    status.scans += 1;
+    status.lastScanAt = new Date(started).toISOString();
+    status.lastScanMs = Date.now() - started;
+    log.debug(`scan took ${status.lastScanMs}ms`);
   };
 
   if (runOnce) {
@@ -114,6 +138,7 @@ async function main() {
     if (stopping) return;
     const wait = msUntilNextBoundary(config.scheduler.intervalSeconds, config.scheduler.closeDelaySeconds);
     const at = Math.floor((Date.now() + wait) / 1000);
+    status.nextScanAt = new Date(at * 1000).toISOString();
     log.info(`next scan at ${formatUtc(at)} (in ${Math.round(wait / 1000)}s)`);
     timer = setTimeout(async () => {
       await runScan();
@@ -125,18 +150,6 @@ async function main() {
   scheduleNext();
 }
 
-/**
- * Minimal HTTP responder so hosting platforms can see the process is up.
- * A port clash is logged rather than thrown: the bot's real job is scanning,
- * and an unhandled server error would otherwise take it down.
- */
-function startKeepAlive(port = process.env.PORT || 3000) {
-  const server = http.createServer((req, res) => res.end('SMC bot alive'));
-  server.on('error', (err) => log.error(`keep-alive server failed on port ${port}: ${err.message}`));
-  server.listen(port, () => log.info(`keep-alive server listening on port ${server.address().port}`));
-  return server;
-}
-
 if (require.main === module) {
   main().catch((err) => {
     log.error('fatal:', err);
@@ -144,4 +157,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, startKeepAlive };
+module.exports = { main };

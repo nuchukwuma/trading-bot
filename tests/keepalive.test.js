@@ -4,7 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
 
-const { startKeepAlive } = require('../src/index');
+const { startServer } = require('../src/server');
+
+const startKeepAlive = (port) => startServer({ port });
 
 function get(port) {
   return new Promise((resolve, reject) => {
@@ -26,7 +28,7 @@ test('keep-alive: answers on its port so the host sees the app running', async (
   await listening(server);
   const res = await get(server.address().port);
   assert.equal(res.status, 200);
-  assert.equal(res.body, 'SMC bot alive');
+  assert.equal(JSON.parse(res.body).ok, true);
   await new Promise((r) => server.close(r));
 });
 
