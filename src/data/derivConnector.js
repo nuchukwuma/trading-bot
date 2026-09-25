@@ -60,10 +60,19 @@ class DerivConnector {
       ws.on('error', onError);
       ws.on('message', (raw) => this._onMessage(raw));
       ws.on('close', () => {
-        log.warn('socket closed');
         this.ws = null;
+        // Deriv drops idle connections after about a minute. With nothing in
+        // flight that is harmless: the next request reconnects on demand, so
+        // there is no need to hold a socket open between scans.
+        const interrupted = this.pending.size > 0;
         this._failAllPending(new Error('Deriv socket closed'));
-        if (!this.closedByUs) this._scheduleReconnect();
+        if (this.closedByUs) return;
+        if (!interrupted) {
+          log.debug('idle connection closed by the server');
+          return;
+        }
+        log.warn('socket closed with requests in flight');
+        this._scheduleReconnect();
       });
     });
 
