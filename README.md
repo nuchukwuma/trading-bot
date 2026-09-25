@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 306 unit tests, no network or database needed
+npm test                 # 307 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -31,7 +31,7 @@ Set `DRY_RUN=1` to format and log alerts without sending them to Telegram.
 
 | Variable | What it is |
 | --- | --- |
-| `DERIV_APP_ID` | Deriv app id from https://api.deriv.com. `1089` is the public demo id. No API token is needed — only `ticks_history` is called. |
+| `DERIV_WS_URL` | Defaults to Deriv's public market-data endpoint `wss://api.derivws.com/trading/v1/options/ws/public`, which needs no account, token or app id — only `ticks_history` is called. The legacy `ws.derivws.com` hosts and app id `1089` are retired and answer HTTP 520. |
 | `FOREX_SOURCE` | `deriv` (default) or `oanda`. Deriv needs nothing extra and is available in Nigeria. |
 | `OANDA_API_KEY` / `OANDA_ACCOUNT_ID` | Only with `FOREX_SOURCE=oanda`. OANDA practice accounts are not open in every country. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | From @BotFather, and the chat to post into. |

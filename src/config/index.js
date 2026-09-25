@@ -129,8 +129,11 @@ const config = {
   // ---------------- Data sources ----------------
   data: {
     deriv: {
-      appId: process.env.DERIV_APP_ID || '1089',
-      wsUrl: process.env.DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3',
+      // Deriv retired the legacy ws.derivws.com / ws.binaryws.com hosts (they
+      // now answer HTTP 520). Market data comes from the public endpoint,
+      // which needs no login and no app id.
+      appId: process.env.DERIV_APP_ID || '',
+      wsUrl: process.env.DERIV_WS_URL || 'wss://api.derivws.com/trading/v1/options/ws/public',
       requestTimeoutMs: num(process.env.DERIV_TIMEOUT_MS, 20000),
       reconnectDelayMs: num(process.env.DERIV_RECONNECT_MS, 3000),
       maxReconnectDelayMs: num(process.env.DERIV_MAX_RECONNECT_MS, 60000),

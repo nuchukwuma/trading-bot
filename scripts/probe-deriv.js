@@ -10,14 +10,19 @@ require('dotenv').config();
 const WebSocket = require('ws');
 
 const appId = process.env.DERIV_APP_ID || '1089';
-const hosts = ['wss://ws.derivws.com/websockets/v3', 'wss://ws.binaryws.com/websockets/v3'];
+const hosts = [
+  'wss://api.derivws.com/trading/v1/options/ws/public',
+  'wss://ws.derivws.com/websockets/v3',
+  'wss://ws.binaryws.com/websockets/v3',
+];
 const origins = [null, 'https://api.deriv.com'];
 
 function probe(url, origin) {
   return new Promise((resolve) => {
     const opts = { handshakeTimeout: 15000 };
     if (origin) opts.origin = origin;
-    const ws = new WebSocket(`${url}?app_id=${appId}`, opts);
+    const full = url.includes('/ws/public') ? url : `${url}?app_id=${appId}`;
+    const ws = new WebSocket(full, opts);
     const done = (result) => {
       ws.removeAllListeners();
       ws.on('error', () => {});
@@ -29,7 +34,10 @@ function probe(url, origin) {
       res.on('data', (c) => (body += c));
       res.on('end', () => done(`HTTP ${res.statusCode} ${res.headers.server || ''} ${body.replace(/\s+/g, ' ').slice(0, 120)}`));
     });
-    ws.on('open', () => ws.send(JSON.stringify({ ping: 1 })));
+    // A real data request, so a success proves candles are served here too.
+    ws.on('open', () =>
+      ws.send(JSON.stringify({ ticks_history: 'R_50', style: 'candles', granularity: 1800, count: 2, end: 'latest' }))
+    );
     ws.on('message', (m) => done(`OK — ${String(m).slice(0, 80)}`));
     ws.on('error', (err) => done(`error: ${err.message}`));
   });

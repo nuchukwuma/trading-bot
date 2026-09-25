@@ -213,3 +213,10 @@ test('market data service: fetches both timeframes together', async () => {
   assert.equal(htf.length, 1);
   assert.equal(ltf.length, 1);
 });
+
+test('deriv: public endpoint by default, app id only on a custom URL', () => {
+  const pub = 'wss://api.derivws.com/trading/v1/options/ws/public';
+  assert.equal(new DerivConnector({ wsUrl: pub, appId: '' }).url, pub);
+  assert.equal(new DerivConnector({ wsUrl: pub, appId: '1089' }).url, pub, 'a stale app id is not sent to the public endpoint');
+  assert.equal(new DerivConnector({ wsUrl: 'wss://x.example/v3', appId: 'abc' }).url, 'wss://x.example/v3?app_id=abc');
+});
