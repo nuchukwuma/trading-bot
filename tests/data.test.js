@@ -220,3 +220,34 @@ test('deriv: public endpoint by default, app id only on a custom URL', () => {
   assert.equal(new DerivConnector({ wsUrl: pub, appId: '1089' }).url, pub, 'a stale app id is not sent to the public endpoint');
   assert.equal(new DerivConnector({ wsUrl: 'wss://x.example/v3', appId: 'abc' }).url, 'wss://x.example/v3?app_id=abc');
 });
+
+test('deriv: an idle close does not reconnect; one with requests in flight does', () => {
+  const EventEmitter = require('events');
+  const sockets = [];
+  class FakeWs extends EventEmitter {
+    constructor() {
+      super();
+      this.readyState = 0;
+      sockets.push(this);
+    }
+    send() {}
+    close() {}
+  }
+  const deriv = new DerivConnector({ WebSocketImpl: FakeWs, reconnectDelayMs: 60000 });
+  let scheduled = 0;
+  deriv._scheduleReconnect = () => (scheduled += 1);
+
+  deriv.connect();
+  sockets[0].readyState = 1;
+  sockets[0].emit('open');
+  sockets[0].emit('close');
+  assert.equal(scheduled, 0, 'idle close is left alone');
+
+  deriv.connect();
+  sockets[1].readyState = 1;
+  sockets[1].emit('open');
+  deriv.pending.set(1, { resolve() {}, reject() {}, timer: null });
+  sockets[1].emit('close');
+  assert.equal(scheduled, 1, 'an interrupted request triggers a reconnect');
+  assert.equal(deriv.pending.size, 0);
+});
