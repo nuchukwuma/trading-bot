@@ -76,10 +76,7 @@ class Scanner {
         });
       }
       await this.learning.relearn().catch((err) => log.error(`relearn failed: ${err.message}`));
-      this.edgeProfile = EdgeProfile.load(config.edge.profilePath, {
-        required: config.edge.required,
-        enforceUnvalidated: config.edge.enforceUnvalidated,
-      });
+      if (this.learning.profile) this.edgeProfile = this.learning.profile;
     }
 
     const fired = results.filter((r) => r.fired).length;

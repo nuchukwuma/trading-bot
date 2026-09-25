@@ -251,3 +251,25 @@ test('deriv: an idle close does not reconnect; one with requests in flight does'
   assert.equal(scheduled, 1, 'an interrupted request triggers a reconnect');
   assert.equal(deriv.pending.size, 0);
 });
+
+test('deriv: fetchHistory pages backwards until it covers the range', async () => {
+  const deriv = new DerivConnector();
+  const requests = [];
+  // A feed with 30m candles from t=0 to t=30000*1800, 5 per page.
+  deriv.send = async (p) => {
+    requests.push(p.end);
+    const lastBar = Math.floor(p.end / 1800) * 1800; // every bar opened by `end`, forming one included
+    const candles = [];
+    for (let t = lastBar - (p.count - 1) * 1800; t <= lastBar; t += 1800) {
+      if (t >= 0) candles.push({ epoch: t, open: 1, high: 2, low: 0.5, close: 1.5 });
+    }
+    return { candles };
+  };
+  const to = 100 * 1800;
+  const out = await deriv.fetchHistory('R_75', 1800, { from: 80 * 1800, to, pageSize: 5 });
+  assert.equal(out[0].time, 80 * 1800);
+  assert.equal(out.at(-1).time, 99 * 1800);
+  assert.equal(new Set(out.map((c) => c.time)).size, out.length, 'no duplicates across pages');
+  assert.ok(requests.length >= 4, 'several pages were needed');
+  for (let i = 1; i < out.length; i += 1) assert.equal(out[i].time - out[i - 1].time, 1800);
+});

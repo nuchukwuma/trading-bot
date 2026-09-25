@@ -583,3 +583,32 @@ test('edge profile: learned feature rules apply to live setups', () => {
   assert.equal(excluded.allow, false);
   assert.match(excluded.reason, /session:asia/);
 });
+
+test('learner: finds conditions that only pay TOGETHER, not either alone', () => {
+  const rand = mulberry32(99);
+  const trades = Array.from({ length: 900 }, (_, i) => {
+    const london = rand() < 0.4;
+    const eql = rand() < 0.4;
+    const features = ['instrument:X', 'score:4', london ? 'session:london' : 'session:ny', eql ? 'sweep:eql' : 'sweep:none'];
+    for (const t of NOISE_TOKENS) if (rand() < 0.3 && !/^session|^sweep/.test(t)) features.push(t);
+    // Only the combination has an edge; each alone is the baseline.
+    const win = rand() < (london && eql ? 0.8 : 0.3);
+    return {
+      source: 'backtest',
+      instrumentId: 'X',
+      time: 1700000000 + i * 1800,
+      score: 4,
+      confirmations: ['ltf_structure'],
+      features: [...new Set(features)].sort(),
+      direction: 'bullish',
+      biasStrength: 'strong',
+      filled: true,
+      rMultiple: win ? 2 : -1,
+    };
+  });
+  const result = learn(trades, { minSamples: 30 });
+  assert.deepEqual(result.rules.requiredFeatures, ['session:london & sweep:eql']);
+  const { matchesRules } = require('../src/learn/learner');
+  assert.equal(matchesRules({ ...trades[0], features: ['session:london', 'sweep:eql'] }, result.rules), true);
+  assert.equal(matchesRules({ ...trades[0], features: ['session:london', 'sweep:none'] }, result.rules), false);
+});

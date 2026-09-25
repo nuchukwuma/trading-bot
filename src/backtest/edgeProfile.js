@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { matchesRules } = require('./analyze');
+const { matchesRules, hasFeature } = require('./analyze');
 const { adjustmentFor } = require('../learn/planLearner');
 const { createLogger } = require('../util/logger');
 
@@ -44,8 +44,9 @@ class EdgeProfile {
     }
   }
 
-  static save(filePath, { rules, validated, notes, train, test, unfilteredTest, plan = null, meta = {} }) {
-    const payload = {
+  /** The stored shape of a learner result. */
+  static build({ rules, validated, notes, train, test, unfilteredTest, plan = null, meta = {} }) {
+    return {
       version: PROFILE_VERSION,
       generatedAt: new Date().toISOString(),
       validated,
@@ -58,6 +59,10 @@ class EdgeProfile {
       performance: { train, test, unfilteredTest },
       meta,
     };
+  }
+
+  static save(filePath, result) {
+    const payload = EdgeProfile.build(result);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`);
     return payload;
@@ -148,9 +153,9 @@ class EdgeProfile {
       return `Missing confirmation(s) the backtest found necessary: ${missing.join(', ')}`;
     }
     const features = setup.features || [];
-    const lacking = (r.requiredFeatures || []).filter((f) => !features.includes(f));
+    const lacking = (r.requiredFeatures || []).filter((f) => !hasFeature(features, f));
     if (lacking.length) return `Lacks the pattern(s) the bot learned pay: ${lacking.join(', ')}`;
-    const bad = (r.excludedFeatures || []).filter((f) => features.includes(f));
+    const bad = (r.excludedFeatures || []).filter((f) => hasFeature(features, f));
     if (bad.length) return `Shows pattern(s) the bot learned lose: ${bad.join(', ')}`;
     return 'Does not match the backtested profile';
   }

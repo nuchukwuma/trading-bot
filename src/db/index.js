@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const config = require('../config');
 const Alert = require('./models/Alert');
 const Setting = require('./models/Setting');
+const BacktestTrade = require('./models/BacktestTrade');
 const { createLogger } = require('../util/logger');
 
 const log = createLogger('db');
@@ -200,6 +201,25 @@ async function performanceSummary({ instrumentId = null } = {}) {
   ]);
 }
 
+/** Replace the stored backtest ledger with a new run's trades. */
+async function replaceBacktestTrades(trades, runId) {
+  if (!isConnected()) return 0;
+  await BacktestTrade.deleteMany({});
+  for (let i = 0; i < trades.length; i += 1000) {
+    await BacktestTrade.insertMany(
+      trades.slice(i, i + 1000).map((t) => ({ ...t, runId })),
+      { ordered: false }
+    );
+  }
+  return trades.length;
+}
+
+async function loadBacktestTrades() {
+  if (!isConnected()) return null;
+  const docs = await BacktestTrade.find({}, { _id: 0, __v: 0, runId: 0 }).sort({ time: 1 }).lean();
+  return docs.map((t) => ({ ...t, source: t.source || 'backtest' }));
+}
+
 async function getSetting(key) {
   const doc = await Setting.findOne({ key }).lean();
   return doc ? doc.value : undefined;
@@ -210,6 +230,8 @@ async function setSetting(key, value) {
 }
 
 module.exports = {
+  replaceBacktestTrades,
+  loadBacktestTrades,
   alertsNeedingVariants,
   setVariants,
   updateProgress,

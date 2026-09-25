@@ -1,7 +1,7 @@
 'use strict';
 
 const { summarize, welchTest, benjaminiHochberg } = require('../backtest/stats');
-const { matchesRules, applyRules } = require('../backtest/analyze');
+const { matchesRules, applyRules, hasFeature, COMBO } = require('../backtest/analyze');
 const { learnPlan } = require('./planLearner');
 
 const DEFAULTS = {
@@ -173,15 +173,15 @@ function ruleBudget(n, cfg) {
 function testFeatures(pool, cfg) {
   const counts = new Map();
   for (const t of pool) for (const f of t.features || []) counts.set(f, (counts.get(f) || 0) + 1);
+  // Both sides of the split must be big enough to compare.
+  const judgeable = (n) => n >= cfg.minSamples && pool.length - n >= cfg.minSamples;
 
-  const testable = [...counts.entries()].filter(
-    // Both sides of the split must be big enough to compare.
-    ([, n]) => n >= cfg.minSamples && pool.length - n >= cfg.minSamples
-  );
+  const singles = [...counts.entries()].filter(([, n]) => judgeable(n));
+  const testable = [...singles, ...conditionPairs(pool, new Set(singles.map(([f]) => f)), counts, judgeable, cfg)];
 
   const results = testable.map(([feature]) => {
-    const withIt = pool.filter((t) => (t.features || []).includes(feature));
-    const withoutIt = pool.filter((t) => !(t.features || []).includes(feature));
+    const withIt = pool.filter((t) => hasFeature(t.features, feature));
+    const withoutIt = pool.filter((t) => !hasFeature(t.features, feature));
     const test = welchTest(withIt.map((t) => t.rMultiple), withoutIt.map((t) => t.rMultiple));
     return {
       feature,
@@ -200,29 +200,87 @@ function testFeatures(pool, cfg) {
   return results.sort((a, b) => a.p - b.p);
 }
 
+/** Within the trades carrying each part, does the other part still matter? */
+function comboEarnsItsParts(pool, feature, alpha) {
+  const parts = feature.split(COMBO);
+  return parts.every((part, i) => {
+    const other = parts[1 - i];
+    const within = pool.filter((t) => hasFeature(t.features, part));
+    const withOther = within.filter((t) => hasFeature(t.features, other)).map((t) => t.rMultiple);
+    const withoutOther = within.filter((t) => !hasFeature(t.features, other)).map((t) => t.rMultiple);
+    if (withOther.length < 2 || withoutOther.length < 2) return false;
+    return welchTest(withOther, withoutOther).p < alpha;
+  });
+}
+
+/**
+ * Conditions that recur TOGETHER — "london session & equal-lows sweep" — as
+ * candidates in their own right. Only pairs of conditions that are each common
+ * enough to judge, from different families (never "hour:x & session:y"), and
+ * that are not just a relabelling of one parent. Capped to the most frequent,
+ * since every extra candidate costs statistical power under FDR control.
+ */
+function conditionPairs(pool, singles, counts, judgeable, cfg) {
+  const family = (f) => f.split(':')[0];
+  const pairCounts = new Map();
+  for (const t of pool) {
+    const fs = (t.features || []).filter((f) => singles.has(f)).sort();
+    for (let i = 0; i < fs.length; i += 1) {
+      for (let j = i + 1; j < fs.length; j += 1) {
+        if (family(fs[i]) === family(fs[j])) continue;
+        const key = `${fs[i]}${COMBO}${fs[j]}`;
+        pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+      }
+    }
+  }
+  return [...pairCounts.entries()]
+    .filter(([key, n]) => {
+      if (!judgeable(n)) return false;
+      const [a, b] = key.split(COMBO);
+      return n < counts.get(a) && n < counts.get(b);
+    })
+    .sort((x, y) => y[1] - x[1])
+    .slice(0, cfg.maxPairs === undefined ? 300 : cfg.maxPairs);
+}
+
 /**
  * Best remaining rule, re-measured inside the CURRENT pool rather than trusted
  * from the first pass — a feature can stop helping once another rule is in.
  */
 function pickBestRule(pool, significant, rules, baseline, cfg) {
   let best = null;
+  const cache = new Map();
+  const combos = significant.filter((c) => c.feature.includes(COMBO)).length;
+  const comboAlpha = 0.05 / Math.max(1, combos);
+  const measure = (feature, kind) => {
+    const key = `${kind}:${feature}`;
+    if (!cache.has(key)) {
+      const subset =
+        kind === 'require'
+          ? pool.filter((t) => hasFeature(t.features, feature))
+          : pool.filter((t) => !hasFeature(t.features, feature));
+      const stats = summarize(subset);
+      cache.set(key, { stats, gain: stats.expectancyLower - baseline.expectancyLower });
+    }
+    return cache.get(key);
+  };
 
   for (const candidate of significant) {
     const { feature } = candidate;
     if (rules.requiredFeatures.includes(feature) || rules.excludedFeatures.includes(feature)) continue;
 
     const kind = candidate.diff > 0 ? 'require' : 'exclude';
-    const subset =
-      kind === 'require'
-        ? pool.filter((t) => (t.features || []).includes(feature))
-        : pool.filter((t) => !(t.features || []).includes(feature));
-
-    const stats = summarize(subset);
+    const { stats, gain } = measure(feature, kind);
     if (stats.n < cfg.minSamples) continue;
     if (stats.expectancyLower <= 0) continue;
-
-    const gain = stats.expectancyLower - baseline.expectancyLower;
     if (gain < cfg.minImprovement) continue;
+
+    // A combination has to earn its second condition. Among trades that
+    // already have one part, the other part must itself split outcomes —
+    // at a significance corrected for how many combinations are in play.
+    // Otherwise "real signal & noise" wins on in-sample luck: with twenty
+    // pairs built on one real signal, one of them always looks better.
+    if (feature.includes(COMBO) && !comboEarnsItsParts(pool, feature, comboAlpha)) continue;
 
     if (!best || gain > best.gain) best = { feature, kind, stats, gain, p: candidate.p };
   }
