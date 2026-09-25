@@ -3,6 +3,7 @@
 const { summarize, welchTest, benjaminiHochberg } = require('../backtest/stats');
 const { matchesRules, applyRules, hasFeature, COMBO } = require('../backtest/analyze');
 const { learnPlan } = require('./planLearner');
+const { learnPlaybook } = require('./playbook');
 
 const DEFAULTS = {
   minSamples: 30,
@@ -40,7 +41,10 @@ function learn(trades, opts = {}) {
   const result = learnRules(trades, opts);
   // Where the stop and targets go is learned alongside which setups to take.
   result.plan = learnPlan(trades, { ...DEFAULTS, ...opts });
-  result.notes = [...result.notes, ...result.plan.notes];
+  // Which combinations win most on each pair (playbook.js). The previous
+  // playbook carries retirements forward.
+  result.playbook = learnPlaybook(trades, opts, opts.previousPlaybook || null);
+  result.notes = [...result.notes, ...result.plan.notes, ...result.playbook.notes];
   return result;
 }
 

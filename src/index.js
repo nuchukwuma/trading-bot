@@ -14,6 +14,7 @@ const { rateSetup } = require('./learn/rater');
 const { loadBacktestTrades } = require('./learn/ledger');
 const { describeAdjust } = require('./learn/planVariants');
 const { BacktestRunner } = require('./backtest/runner');
+const { formatPlaybook } = require('./backtest/insights');
 const { loadProfile } = require('./learn/profileStore');
 
 const log = createLogger('bot');
@@ -249,6 +250,7 @@ async function main() {
               runner.run({ days, reason: 'requested from Telegram' }).catch(() => {});
               return null; // the runner announces itself
             },
+            playbook: async (pairId) => formatPlaybook(scanner.edgeProfile.data && scanner.edgeProfile.data.playbook, pairId),
             insights: async () =>
               (runner && (await runner.report())) || 'No backtest report yet — /backtest runs one (about 20 minutes).',
           }

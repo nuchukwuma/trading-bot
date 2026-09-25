@@ -161,11 +161,29 @@ class Scanner {
       }
     }
 
+    // ---- Per-pair playbook ----
+    // A combination proven on THIS pair outranks the all-pairs filter; in
+    // playbook-only mode, a pair with a proven playbook sends nothing else.
+    const pb = this.edgeProfile.playbookMatch
+      ? this.edgeProfile.playbookMatch(instrument.id, evaluation.features || [])
+      : { hasProven: false, matches: [] };
+    const provenMatch = pb.matches.find((m) => m.status === 'proven') || null;
+    if (pb.matches.length) alert.playbook = { matches: pb.matches.slice(0, 2), baseline: pb.baseline };
+    const allowed = verdict.allow || Boolean(provenMatch);
+    if (!verdict.allow && provenMatch) {
+      alert.edgeProfile = {
+        matched: true,
+        active: this.edgeProfile.active,
+        reason: `Sent on ${instrument.id}'s proven playbook although the all-pairs filter would hold it (${verdict.reason})`,
+      };
+    }
+    const offPlaybook = allowed && this.settings && this.settings.playbookOnly && pb.hasProven && !provenMatch;
+
     // A pair switched off (or alerts paused) from Telegram takes the same
     // path as a held-back setup: tracked and learned from, just not sent.
-    const muted = verdict.allow && this.settings && !this.settings.shouldAlert(instrument.id);
+    const muted = allowed && this.settings && !this.settings.shouldAlert(instrument.id);
 
-    if (!verdict.allow || muted) {
+    if (!allowed || muted || offPlaybook) {
       // Held back from the user, but still tracked and learned from. Without
       // this the bot would only ever see outcomes for trades it already
       // believed in, and the filter could never discover it was wrong.
@@ -184,13 +202,15 @@ class Scanner {
         ? this.settings.paused
           ? 'Alerts paused from Telegram'
           : 'Pair switched off from Telegram'
-        : verdict.reason;
+        : offPlaybook
+          ? `Does not match ${instrument.id}'s proven playbook (playbook-only mode)`
+          : verdict.reason;
       log.debug(`${instrument.id} held back: ${reason}`);
       return {
         instrumentId: instrument.id,
         fired: false,
         shadowed: true,
-        stage: muted ? 'muted' : 'gate:edge',
+        stage: muted ? 'muted' : offPlaybook ? 'playbook' : 'gate:edge',
         reason,
         recordId: shadowId,
         alert,

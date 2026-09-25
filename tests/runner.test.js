@@ -138,3 +138,32 @@ test('insights: proven conditions are kept apart from hunches', () => {
   assert.match(text, /needs London session/);
   assert.match(text, /now applied/);
 });
+
+test('insights: /playbook lists each pair\'s best combination and details one pair', () => {
+  const { formatPlaybook } = require('../src/backtest/insights');
+  const pb = {
+    pairs: {
+      EURUSD: {
+        trades: 300,
+        baseline: { winRate: 0.36, avgR: 0.05 },
+        combos: [
+          {
+            combo: 'session:london & sweep:eql',
+            status: 'proven',
+            overall: { n: 44, wins: 32, winRate: 0.727, avgR: 1.1 },
+            search: { n: 30, wins: 22 },
+            check: { n: 10, wins: 7 },
+            live: { n: 4, wins: 3 },
+          },
+        ],
+      },
+      VOL75: { trades: 90, baseline: { winRate: 0.3, avgR: -0.1 }, combos: [] },
+    },
+  };
+  const all = formatPlaybook(pb);
+  assert.match(all, /🎯 EURUSD: London session \+ EQL sweep — won 73% of 44 vs 36% normally/);
+  assert.match(all, /VOL75: nothing beats its normal 30% yet/);
+  const one = formatPlaybook(pb, 'EURUSD');
+  assert.match(one, /search 22\/30, check 7\/10, live 3\/4/);
+  assert.match(formatPlaybook(null), /No playbook yet/);
+});
