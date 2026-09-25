@@ -40,6 +40,30 @@ class MarketDataService {
     return merged;
   }
 
+  /**
+   * Long history for the backtest: `days` back from now, both timeframes.
+   * Deriv pages as far as its history goes; other feeds give what one request
+   * can (their connectors have no paging yet).
+   */
+  async getHistory(instrument, { days, htfSeconds, ltfSeconds, onPage = null }) {
+    const connector = this.connectorFor(instrument);
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - days * 86400;
+    if (typeof connector.fetchHistory === 'function') {
+      const ltf = await connector.fetchHistory(instrument.symbol, ltfSeconds, { from, to, onPage });
+      // Extra 4H history before the first 30m bar, so the bias has context.
+      const htf = await connector.fetchHistory(instrument.symbol, htfSeconds, { from: from - 300 * htfSeconds, to });
+      return { htf, ltf };
+    }
+    const ltfCount = Math.min(5000, Math.ceil((days * 86400) / ltfSeconds));
+    return this.getBiasAndEntryCandles(instrument, {
+      htfSeconds,
+      ltfSeconds,
+      ltfCount,
+      htfCount: Math.min(5000, Math.ceil(ltfCount / 8) + 300),
+    });
+  }
+
   /** Both timeframes for one instrument, fetched in parallel. */
   async getBiasAndEntryCandles(instrument, { htfSeconds, ltfSeconds, htfCount, ltfCount }) {
     const [htf, ltf] = await Promise.all([

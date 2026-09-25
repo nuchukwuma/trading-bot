@@ -5,7 +5,7 @@ const { learn } = require('./learner');
 const { resolvePending, recordVariants } = require('./outcomeTracker');
 const { rateSetup } = require('./rater');
 const ledger = require('./ledger');
-const { EdgeProfile } = require('../backtest/edgeProfile');
+const { loadProfile, saveProfile } = require('./profileStore');
 const { createLogger } = require('../util/logger');
 
 const log = createLogger('learn');
@@ -31,11 +31,20 @@ class LearningService {
     this.kindOf = opts.kindOf || (() => null);
     this.trades = [];
     this.ledgerStale = true;
+    // The current learned profile, kept in MongoDB (profileStore.js).
+    this.profile = null;
   }
 
   /** Backtest seed + every resolved live setup, merged and de-duplicated. */
+  async loadProfile() {
+    this.profile = await loadProfile({ db: this.db, filePath: this.profilePath });
+    return this.profile;
+  }
+
   async loadLedger() {
-    const seed = ledger.loadBacktestTrades(this.seedPath);
+    // Backtest seed from MongoDB (survives restarts), else the local file.
+    const stored = this.db.loadBacktestTrades ? await this.db.loadBacktestTrades().catch(() => null) : null;
+    const seed = stored && stored.length ? stored : ledger.loadBacktestTrades(this.seedPath);
     const live = (await this.db.resolvedAlerts({ limit: this.cfg.maxLedgerTrades })).map(ledger.fromAlertDocument);
     this.trades = ledger.mergeLedger(seed, live);
     this.ledgerStale = false;
@@ -94,16 +103,20 @@ class LearningService {
     }
 
     const result = learn(trades, this.cfg);
-    const previous = EdgeProfile.load(this.profilePath);
+    const previous = this.profile || (await this.loadProfile());
 
-    EdgeProfile.save(this.profilePath, {
-      ...result,
-      meta: { ledger: summary, growth: result.growth, learnedAt: new Date().toISOString() },
+    this.profile = await saveProfile({
+      db: this.db,
+      filePath: this.profilePath,
+      result: { ...result, meta: { ledger: summary, growth: result.growth, learnedAt: new Date().toISOString() } },
     });
 
     this.resolvedSinceLearn = 0;
 
-    const changed = JSON.stringify(previous.rules) !== JSON.stringify(result.rules);
+    const changed =
+      JSON.stringify(previous.rules) !== JSON.stringify(result.rules) ||
+      JSON.stringify((previous.data && previous.data.plan && previous.data.plan.byGroup) || {}) !==
+        JSON.stringify(result.plan.byGroup);
     log.info(
       `relearned on ${summary.total} trades (${JSON.stringify(summary.bySource)}) — ` +
         `${result.growth.featureRulesUsed}/${result.growth.featureRuleBudget} feature rules, ` +

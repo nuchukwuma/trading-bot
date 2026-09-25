@@ -41,6 +41,17 @@ function analyzeDimensions(trades) {
 }
 
 /** Does a trade satisfy a set of profile rules? */
+/**
+ * Does a feature list carry a token? A combined token "a & b" (two
+ * conditions that occur together) needs every part.
+ */
+const COMBO = ' & ';
+function hasFeature(features, token) {
+  if (!features) return false;
+  if (!token.includes(COMBO)) return features.includes(token);
+  return token.split(COMBO).every((part) => features.includes(part));
+}
+
 function matchesRules(trade, rules) {
   if (rules.minScore && trade.score < rules.minScore) return false;
   if (rules.disabledInstruments && rules.disabledInstruments.includes(trade.instrumentId)) return false;
@@ -56,10 +67,10 @@ function matchesRules(trade, rules) {
   // Learned chart-pattern and context features.
   const features = trade.features || [];
   for (const f of rules.requiredFeatures || []) {
-    if (!features.includes(f)) return false;
+    if (!hasFeature(features, f)) return false;
   }
   for (const f of rules.excludedFeatures || []) {
-    if (features.includes(f)) return false;
+    if (hasFeature(features, f)) return false;
   }
   return true;
 }
@@ -244,4 +255,6 @@ function finish({ rules, train, test, ordered, cfg, notes, insufficient = false 
 
 const fmtR = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(3)}R`;
 
-module.exports = { analyzeDimensions, selectProfile, matchesRules, applyRules, CHECK_IDS, BIAS_ORDER, ANALYZE_DEFAULTS: DEFAULTS };
+module.exports = {
+  hasFeature,
+  COMBO, analyzeDimensions, selectProfile, matchesRules, applyRules, CHECK_IDS, BIAS_ORDER, ANALYZE_DEFAULTS: DEFAULTS };

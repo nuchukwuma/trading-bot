@@ -175,6 +175,45 @@ class DerivConnector {
   }
 
   /**
+   * Closed candles between `from` and `to` (epoch seconds), paging backwards
+   * because one request returns at most `pageSize` candles. Stops early if the
+   * feed has no older history. Used by the backtest, not the live scan.
+   */
+  async fetchHistory(symbol, tfSeconds, { from, to = Math.floor(Date.now() / 1000), pageSize = 5000, onPage = null } = {}) {
+    if (!GRANULARITIES.includes(tfSeconds)) {
+      throw new Error(`Deriv does not support a ${tfSeconds}s granularity natively`);
+    }
+    const byTime = new Map();
+    let end = to;
+    for (let page = 0; page < 100; page += 1) {
+      const res = await this.send({ ticks_history: symbol, style: 'candles', granularity: tfSeconds, count: pageSize, end });
+      const raw = res.candles || [];
+      if (!raw.length) break;
+      for (const c of raw) {
+        byTime.set(Number(c.epoch), {
+          time: Number(c.epoch),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: 0,
+        });
+      }
+      const oldest = Number(raw[0].epoch);
+      if (onPage) onPage(byTime.size);
+      if (oldest <= from || oldest >= end) break;
+      end = oldest - 1;
+    }
+    const candles = normalize(
+      [...byTime.values()]
+        // Closed by `to` only; the bar still forming at `to` is dropped.
+        .filter((c) => c.time >= from && c.time + tfSeconds <= to)
+        .sort((a, b) => a.time - b.time)
+    );
+    return dropForming(candles, tfSeconds);
+  }
+
+  /**
    * The tradeable symbol list. Used by the calibration script to confirm the
    * symbols in the instrument registry actually exist on the feed.
    */

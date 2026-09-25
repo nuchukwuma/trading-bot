@@ -14,6 +14,11 @@ const DEFAULTS = {
   // series does not fill the sample with artificial timeouts.
   tailBars: 96,
   applyDedup: true,
+  // How much history each evaluation sees. The live scanner fetches exactly
+  // this many candles, so the replay sees what the bot would have seen — and
+  // a year-long replay stays linear instead of re-reading all history per bar.
+  ltfWindow: config.timeframes.ltfCandles,
+  htfWindow: config.timeframes.htfCandles,
 };
 
 /**
@@ -39,13 +44,16 @@ function replayInstrument({ instrument, htf, ltf, opts = {} }) {
   const skipped = { bias: 0, confirmations: 0, gate: 0, dedup: 0, data: 0 };
 
   const lastEvaluated = ltf.length - cfg.tailBars;
+  let htfEnd = 0;
 
   for (let i = cfg.warmupBars; i < lastEvaluated; i += 1) {
-    const ltfSlice = ltf.slice(0, i + 1);
+    const ltfSlice = ltf.slice(Math.max(0, i + 1 - cfg.ltfWindow), i + 1);
     const barCloseTime = ltf[i].time + ltfSeconds;
 
     // Only 4H candles that had already CLOSED by this 30m close are visible.
-    const htfSlice = htf.filter((c) => c.time + htfSeconds <= barCloseTime);
+    // htf is sorted, so advance a pointer instead of filtering every bar.
+    while (htfEnd < htf.length && htf[htfEnd].time + htfSeconds <= barCloseTime) htfEnd += 1;
+    const htfSlice = htf.slice(Math.max(0, htfEnd - cfg.htfWindow), htfEnd);
     if (!htfSlice.length) {
       skipped.data += 1;
       continue;

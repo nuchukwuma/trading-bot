@@ -8,9 +8,12 @@
  *   npm run backtest -- VOL75 JUMP75  just these
  *   npm run backtest -- --synthetic   random-walk harness check (no real data)
  *   npm run backtest -- --no-write    report only, leave the profile alone
+ *   npm run backtest -- --days=365    a year of history (the default)
+ *   npm run backtest -- --bars=5000   a fixed number of 30m candles instead
  *
- * Writes data/edge-profile.json, which the scanner then enforces before
- * sending any alert.
+ * Writes the profile and the trade ledger to MongoDB when it can reach it
+ * (what the live bot reads), and data/*.json either way. The live bot also
+ * runs this backtest by itself on the server — see src/backtest/runner.js.
  */
 
 const config = require('../src/config');
@@ -22,6 +25,7 @@ const { saveBacktestTrades } = require('../src/learn/ledger');
 const { learn } = require('../src/learn/learner');
 const { randomWalkSeries } = require('../src/backtest/randomWalk');
 const { formatUtc } = require('../src/util/time');
+const { buildReport } = require('../src/backtest/insights');
 
 const R = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(3)}`;
 const PCT = (n) => `${(n * 100).toFixed(1)}%`;
@@ -58,7 +62,7 @@ function section(title, buckets) {
   for (const b of buckets) console.log(row(b.key, b));
 }
 
-async function loadSeries(instruments, { synthetic, bars, drift = 0 }) {
+async function loadSeries(instruments, { synthetic, bars, days, drift = 0 }) {
   if (synthetic) {
     console.log('\n*** SYNTHETIC MODE — random-walk candles, not market data. ***');
     console.log('*** These numbers measure the harness, not the strategy.   ***\n');
@@ -75,12 +79,18 @@ async function loadSeries(instruments, { synthetic, bars, drift = 0 }) {
   const out = [];
   for (const instrument of instruments) {
     try {
-      const { htf, ltf } = await data.getBiasAndEntryCandles(instrument, {
-        htfSeconds: config.timeframes.htfSeconds,
-        ltfSeconds: config.timeframes.ltfSeconds,
-        htfCount: Math.ceil(bars / 8) + 100,
-        ltfCount: bars,
-      });
+      const { htf, ltf } = days
+        ? await data.getHistory(instrument, {
+            days,
+            htfSeconds: config.timeframes.htfSeconds,
+            ltfSeconds: config.timeframes.ltfSeconds,
+          })
+        : await data.getBiasAndEntryCandles(instrument, {
+            htfSeconds: config.timeframes.htfSeconds,
+            ltfSeconds: config.timeframes.ltfSeconds,
+            htfCount: Math.ceil(bars / 8) + 100,
+            ltfCount: bars,
+          });
       console.log(`${instrument.id.padEnd(10)} ${ltf.length} x 30m, ${htf.length} x 4H`);
       out.push({ instrument, htf, ltf });
     } catch (err) {
@@ -97,6 +107,9 @@ async function main() {
   const noWrite = args.includes('--no-write') || synthetic;
   const barsArg = args.find((a) => a.startsWith('--bars='));
   const bars = barsArg ? Number(barsArg.split('=')[1]) : config.backtest.candles;
+  const daysArg = args.find((a) => a.startsWith('--days='));
+  // A year of history by default; --bars asks for a fixed candle count instead.
+  const days = synthetic || barsArg ? null : daysArg ? Number(daysArg.split('=')[1]) : config.backtest.days;
   // Synthetic only: inject a known drift so the selector can be checked for
   // false negatives as well as false positives.
   const driftArg = args.find((a) => a.startsWith('--drift='));
@@ -110,7 +123,7 @@ async function main() {
   }
 
   console.log('Loading candles...');
-  const series = await loadSeries(instruments, { synthetic, bars, drift });
+  const series = await loadSeries(instruments, { synthetic, bars, days, drift });
   if (!series.length) {
     console.error('\nNo candle data available — cannot backtest.');
     process.exit(1);
@@ -233,6 +246,25 @@ async function main() {
       },
     });
     console.log(`\n  Written to ${config.edge.profilePath} (validated: ${written.validated})`);
+
+    // Also into MongoDB, which is what the live bot reads after a restart.
+    if (config.db.enabled) {
+      const db = require('../src/db');
+      try {
+        await db.connect(config.db.uri, { serverSelectionTimeoutMS: 8000 });
+        await db.replaceBacktestTrades(trades, new Date().toISOString());
+        await db.setSetting('edgeProfile', written);
+        await db.setSetting('backtestReport', {
+          text: buildReport({ trades, result: selection, days: days || Math.round(bars / 48), coverage: series.map((s) => ({ id: s.instrument.id, days: (s.ltf[s.ltf.length - 1].time - s.ltf[0].time) / 86400 })) }),
+          generatedAt: new Date().toISOString(),
+        });
+        console.log(`  Stored in MongoDB: ${trades.length} trades + the profile.`);
+      } catch (err) {
+        console.log(`  MongoDB not reachable (${err.message}) — the live bot will run its own backtest instead.`);
+      } finally {
+        await db.disconnect().catch(() => {});
+      }
+    }
     if (!written.validated) {
       console.log('  The scanner will NOT enforce it. Collect more history and re-run.');
     }

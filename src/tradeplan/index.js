@@ -46,6 +46,12 @@ function buildTradePlan(input) {
   if (!(riskDistance > 0)) {
     return reject('stop', 'Stop landed on the entry price');
   }
+  // With no invalidation point beyond the entry, the anchor can leave the
+  // stop on the WRONG side (above a buy's entry). That is not a trade — and a
+  // simulator would score its "stop-out" as a win.
+  if (bullish ? stopPrice >= entryPrice : stopPrice <= entryPrice) {
+    return reject('stop', `Stop would sit on the wrong side of the entry (${bullish ? 'above a buy' : 'below a sell'})`);
+  }
 
   // A learned placement (src/learn/planLearner.js) moves the stop nearer or
   // further while the dollar risk stays fixed; the position size follows.

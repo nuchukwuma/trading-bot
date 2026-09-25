@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 347 unit tests, no network or database needed
+npm test                 # 355 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -55,6 +55,8 @@ messages from anyone else are ignored.
 | `/trades` | Trades running (with live R) or waiting for their entry |
 | `/results 30` | How sent alerts played out over the last N days (default 7): wins, R, dollars |
 | `/learning` | How many trades it has learned from, what it filters on, and any learned stop/target placement |
+| `/insights` | The last backtest's report: what worked, what to avoid, what is only promising |
+| `/backtest 365` | Re-run the backtest now over N days (default 365) |
 
 ### Following every alert to the end
 
@@ -271,6 +273,35 @@ The bot re-learns every `LEARN_RELEARN_EVERY` (default 25) new resolved outcomes
 rules change. `EDGE_PROFILE_REQUIRED=1` keeps it silent until a validated profile exists.
 
 ## Backtesting and the edge profile
+
+### The bot backtests itself
+
+With MongoDB connected, the running bot does all of this on its own server — no laptop needed:
+
+1. A couple of minutes after it starts (and again whenever the last run is more than
+   `BACKTEST_REFRESH_DAYS`, default 7, old) it pages in the last `BACKTEST_DAYS` (default 365)
+   of 30m and 4H history for every pair.
+2. It replays every 30m close with exactly the candle window the live scan sees, in a background
+   thread, so alerts and Telegram commands keep working. On Render's free CPU a full year of all
+   13 pairs takes roughly 15-30 minutes.
+3. Every simulated setup — features, outcome, and its result under each alternative stop/target
+   placement — is stored in MongoDB, replacing the previous run.
+4. It re-learns from the backtest and the live outcomes together, stores the profile in MongoDB,
+   and applies it straight away.
+5. It sends a report to Telegram: results by pair, the conditions and combinations of conditions
+   that **proved** to work or to lose (kept apart from ones that only look promising), the alert
+   filter, and any adopted stop/target placement. `/insights` shows it again; `/backtest` (or
+   `/backtest 180`) re-runs it on demand.
+
+Everything the bot learns — the profile, the backtest ledger, every live alert and its outcome,
+your pair choices — lives in MongoDB, so a restart or redeploy loses nothing.
+
+**Conditions it searches.** Chart patterns (30m and 4H), price action (break and retest, breakers,
+inducement), session, hour, weekday, volatility regime, which confirmations fired, 4H bias strength,
+where price sits in the 4H range, distance from price to the entry, whether yesterday's high or low
+was taken, short-term momentum, the sweep type, the POI type, R:R and stop width — and every pair of
+those that recurs often enough. A pair is only adopted when, among trades that have one part, the
+other part still makes a significant difference; "a real signal plus noise" never gets in on luck.
 
 `npm run backtest` replays history through **the same decision path the live bot uses**
 (`src/evaluate.js`), simulates each resulting trade against the candles that followed, and writes

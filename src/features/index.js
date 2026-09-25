@@ -33,7 +33,7 @@ function extractFeatures({ instrument, bias, scoring, plan, ltfCandles, htfCandl
     tokens.push(`pa:${f}`);
   }
 
-  tokens.push(...extractContext({ instrument, bias, scoring, plan, ltfCandles }));
+  tokens.push(...extractContext({ instrument, bias, scoring, plan, ltfCandles, htfCandles }));
 
   // Stable order, no duplicates — signatures have to be comparable.
   return [...new Set(tokens)].sort();

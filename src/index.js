@@ -13,6 +13,8 @@ const { formatTradeEvent, formatOpenTrades, formatResults } = require('./alerts/
 const { rateSetup } = require('./learn/rater');
 const { loadBacktestTrades } = require('./learn/ledger');
 const { describeAdjust } = require('./learn/planVariants');
+const { BacktestRunner } = require('./backtest/runner');
+const { loadProfile } = require('./learn/profileStore');
 
 const log = createLogger('bot');
 
@@ -91,14 +93,6 @@ async function main() {
   } else if (config.learn.enabled) {
     log.warn('learning needs MongoDB — outcomes cannot be tracked with DB_ENABLED=0');
   }
-  log.info(`edge profile: ${scanner.edgeProfile.describe()}`);
-  if (!scanner.edgeProfile.active) {
-    log.warn(
-      'alerts are NOT filtered by backtested performance — run "npm run backtest" to build a profile, ' +
-        'or set EDGE_PROFILE_REQUIRED=1 to stay silent until one exists'
-    );
-  }
-
   if (config.db.enabled) {
     try {
       await db.connect();
@@ -113,6 +107,20 @@ async function main() {
 
   // Rate each alert against how similar setups have done. With the learner,
   // that is backtest + live outcomes; without a database, the backtest only.
+  // The learned profile: MongoDB first (survives restarts), else the file.
+  if (scanner.learning && scanner.persist) {
+    scanner.edgeProfile = await scanner.learning.loadProfile();
+  } else {
+    scanner.edgeProfile = await loadProfile({ db: null });
+  }
+  log.info(`edge profile: ${scanner.edgeProfile.describe()}`);
+  if (!scanner.edgeProfile.active) {
+    log.warn(
+      'alerts are NOT filtered by backtested performance yet — the bot backtests itself when MongoDB is ' +
+        'connected (or run "npm run backtest"); EDGE_PROFILE_REQUIRED=1 stays silent until a profile exists'
+    );
+  }
+
   if (scanner.learning && scanner.persist) {
     const trades = await scanner.learning.loadLedger().catch((err) => {
       log.warn(`could not load the trade ledger: ${err.message}`);
@@ -195,6 +203,27 @@ async function main() {
   };
 
   const tg = config.alerts.telegram;
+  const telegramReady = scanner.alerts.telegram.configured && !config.dryRun;
+
+  // The bot's own year-long backtest, re-run weekly, stored in MongoDB.
+  let runner = null;
+  if (scanner.learning && scanner.persist) {
+    runner = new BacktestRunner({
+      data: scanner.data,
+      db,
+      learning: scanner.learning,
+      instruments: config.instruments,
+      notify: async (text) => {
+        if (telegramReady) await scanner.alerts.telegram.sendMessage(text);
+        else log.info(text.replace(/<[^>]+>/g, ''));
+      },
+      onProfile: (profile) => {
+        scanner.edgeProfile = profile;
+      },
+    });
+    if (config.backtest.auto) runner.schedule();
+  }
+
   if (tg.commands && scanner.alerts.telegram.configured) {
     control = await new TelegramControl({
       telegram: scanner.alerts.telegram,
@@ -214,6 +243,14 @@ async function main() {
                 days,
               }),
             learning: async () => describeLearning(scanner),
+            backtest: async (days) => {
+              if (!runner) return 'Backtesting needs MongoDB and learning switched on.';
+              if (runner.running) return '🔬 A backtest is already running — the report will follow.';
+              runner.run({ days, reason: 'requested from Telegram' }).catch(() => {});
+              return null; // the runner announces itself
+            },
+            insights: async () =>
+              (runner && (await runner.report())) || 'No backtest report yet — /backtest runs one (about 20 minutes).',
           }
         : {},
     }).start();

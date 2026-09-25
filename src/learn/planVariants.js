@@ -30,12 +30,13 @@ function tp1Choices() {
     .sort((a, b) => a - b);
 }
 
-const keyOf = (stopScale, tp1R) => `s${stopScale}_t${tp1R}`;
+// Hundredths, so the keys hold no "." — MongoDB field names must not.
+const keyOf = (stopScale, tp1R) => `s${Math.round(stopScale * 100)}_t${Math.round(tp1R * 100)}`;
 const BASELINE = () => keyOf(1, config.tradePlan.targets[0].rr);
 
 function parseKey(key) {
-  const m = /^s([\d.]+)_t([\d.]+)$/.exec(key);
-  return m ? { stopScale: Number(m[1]), tp1R: Number(m[2]) } : null;
+  const m = /^s(\d+)_t(\d+)$/.exec(key);
+  return m ? { stopScale: Number(m[1]) / 100, tp1R: Number(m[2]) / 100 } : null;
 }
 
 /** The configured ladder with TP1 moved to `tp1R` and the rest scaled with it. */
