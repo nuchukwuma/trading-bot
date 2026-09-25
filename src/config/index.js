@@ -204,6 +204,22 @@ const config = {
     scanOnStart: bool(process.env.SCAN_ON_START, true),
   },
 
+  // ---------------- Web service (Render) ----------------
+  server: {
+    // Render sets PORT on web services. Unset = no HTTP server (local runs).
+    port: process.env.PORT ? num(process.env.PORT, 10000) : null,
+    keepAwake: {
+      enabled: bool(process.env.KEEP_AWAKE, true),
+      // Render sets RENDER_EXTERNAL_URL itself; KEEP_AWAKE_URL overrides it.
+      url: process.env.KEEP_AWAKE_URL || process.env.RENDER_EXTERNAL_URL || '',
+      // Must stay under Render's 15 minute idle limit.
+      intervalMinutes: num(process.env.KEEP_AWAKE_MINUTES, 10),
+      // "6-22" = 06:00 to 22:00 in KEEP_AWAKE_TZ. Empty = all day.
+      hours: process.env.KEEP_AWAKE_HOURS || '',
+      tz: process.env.KEEP_AWAKE_TZ || 'Africa/Lagos',
+    },
+  },
+
   instruments: enabledInstruments((process.env.INSTRUMENTS || '').split(',')),
   allInstruments: INSTRUMENTS,
   instrumentById: byId,

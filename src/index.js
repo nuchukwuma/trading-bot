@@ -6,6 +6,7 @@ const { LearningService } = require('./learn');
 const db = require('./db');
 const { createLogger } = require('./util/logger');
 const { msUntilNextBoundary, formatUtc } = require('./util/time');
+const { parseHours, startServer, startKeepAwake } = require('./server');
 
 const log = createLogger('bot');
 
@@ -18,6 +19,29 @@ const log = createLogger('bot');
  */
 async function main() {
   const runOnce = process.argv.includes('--once');
+  const status = { lastScanAt: null, lastScanMs: null, nextScanAt: null, scans: 0 };
+
+  // Bind the port first: Render fails a deploy whose port is not open soon
+  // after start, and the first scan can take a while.
+  let server = null;
+  let keepAwake = null;
+  if (!runOnce && config.server.port) {
+    server = startServer({
+      port: config.server.port,
+      getStatus: () => ({ instruments: config.instruments.map((i) => i.id), ...status }),
+    });
+    const ka = config.server.keepAwake;
+    if (ka.enabled && ka.url) {
+      keepAwake = startKeepAwake({
+        url: ka.url,
+        intervalMs: ka.intervalMinutes * 60 * 1000,
+        window: parseHours(ka.hours),
+        tz: ka.tz,
+      });
+    } else if (ka.enabled) {
+      log.warn('keep-awake has no URL — set KEEP_AWAKE_URL (Render provides RENDER_EXTERNAL_URL itself)');
+    }
+  }
 
   log.info(
     `starting — ${config.instruments.length} instrument(s): ${config.instruments.map((i) => i.id).join(', ')}`
@@ -79,6 +103,8 @@ async function main() {
     stopping = true;
     log.info(`${signal} received — shutting down`);
     if (timer) clearTimeout(timer);
+    if (keepAwake) keepAwake.stop();
+    if (server) server.close();
     scanner.close();
     await db.disconnect().catch(() => {});
     process.exit(0);
@@ -93,7 +119,10 @@ async function main() {
     } catch (err) {
       log.error(`scan pass failed: ${err.message}`);
     }
-    log.debug(`scan took ${Date.now() - started}ms`);
+    status.scans += 1;
+    status.lastScanAt = new Date(started).toISOString();
+    status.lastScanMs = Date.now() - started;
+    log.debug(`scan took ${status.lastScanMs}ms`);
   };
 
   if (runOnce) {
@@ -107,6 +136,7 @@ async function main() {
     if (stopping) return;
     const wait = msUntilNextBoundary(config.scheduler.intervalSeconds, config.scheduler.closeDelaySeconds);
     const at = Math.floor((Date.now() + wait) / 1000);
+    status.nextScanAt = new Date(at * 1000).toISOString();
     log.info(`next scan at ${formatUtc(at)} (in ${Math.round(wait / 1000)}s)`);
     timer = setTimeout(async () => {
       await runScan();

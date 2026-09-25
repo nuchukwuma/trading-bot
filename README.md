@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 299 unit tests, no network or database needed
+npm test                 # 303 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -327,6 +327,43 @@ JUMP75      99412.8300    284.1500      611.2200      142.0750      149.1192    
 It never runs during a scan — it only helps you choose the constant. Until then the bot warns at
 startup that those numbers are estimates.
 
+## Deploying to Render (free web service)
+
+`render.yaml` sets the bot up as a free **web service**. Render only keeps a web service running
+if it listens on a port, so when `PORT` is set the bot also starts a small HTTP server:
+
+- `GET /healthz` returns `ok` (Render's health check)
+- `GET /` returns status JSON: instruments, last scan, next scan, scan count
+
+**Keeping it awake.** Render puts a free web service to sleep after 15 minutes with no incoming
+requests. A sleeping bot does not scan. To prevent that, the bot pings its own public URL
+(`RENDER_EXTERNAL_URL`, which Render sets) every `KEEP_AWAKE_MINUTES` (default 10). The request
+goes out through Render's proxy and back in, so it counts as incoming traffic.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `KEEP_AWAKE` | `1` | Set `0` to turn self-pinging off |
+| `KEEP_AWAKE_HOURS` | empty (all day) | e.g. `6-22` = ping only from 06:00 to 22:00; `22-6` wraps overnight |
+| `KEEP_AWAKE_TZ` | `Africa/Lagos` | Time zone the hours are read in |
+| `KEEP_AWAKE_MINUTES` | `10` | Ping interval. Keep it under 15 |
+| `KEEP_AWAKE_URL` | `RENDER_EXTERNAL_URL` | Override the URL that gets pinged |
+
+**A bot that is asleep cannot wake itself.** Self-pinging keeps it awake, but if it does fall asleep
+(after a window ends, or after a restart that is never followed by a request) something outside
+has to send it a request. Add a free external monitor such as UptimeRobot or cron-job.org that
+requests `https://<your-service>.onrender.com/healthz` every 5–10 minutes. With a window, have it
+start a few minutes before the window opens. The bot wakes within about a minute of the first
+request and scans at the next 30m close.
+
+**Limits to know about:**
+- The free tier gives 750 instance hours a month per workspace. Running all day uses about
+  720–744, so this has to be the only free service on the account that stays awake. A `6-22` window
+  uses about 500.
+- The free tier's disk is wiped on every restart, deploy or wake. MongoDB (for example a free Atlas
+  cluster) keeps alerts and outcomes, but `data/edge-profile.json` and
+  `data/backtest-trades.json` do not survive. After a restart the bot alerts unfiltered until the
+  learner re-runs.
+
 ## Layout
 
 ```
@@ -345,6 +382,7 @@ src/
   backtest/    trade simulator, walk-forward replay, statistics, profile selection
   evaluate.js  the single decision path shared by the live scanner and the backtest
   scanner.js   the per-instrument pipeline
+  server.js    status/health HTTP server and keep-awake pinger (Render)
   index.js     scheduler and entry point
 tests/         unit tests per module
 ```
