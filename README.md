@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 331 unit tests, no network or database needed
+npm test                 # 347 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -54,7 +54,7 @@ messages from anyone else are ignored.
 | `/scan` | Run a scan now |
 | `/trades` | Trades running (with live R) or waiting for their entry |
 | `/results 30` | How sent alerts played out over the last N days (default 7): wins, R, dollars |
-| `/learning` | How many trades it has learned from and what it filters on |
+| `/learning` | How many trades it has learned from, what it filters on, and any learned stop/target placement |
 
 ### Following every alert to the end
 
@@ -64,9 +64,26 @@ replies to the original alert — whether you took the trade or not:
 - ▶️ **Entry triggered** — price reached the limit entry
 - 🎯 **TP1 / TP2 hit** — with what to do next (stop to breakeven, trail) and the running R
 - ✅ **Win**, ❌ **Stopped out**, ⏱ **closed at the 48h window** — with the result in R and dollars
-- ⚪️ **Invalidated** — the entry was not reached within 8 candles (4h), so there was no trade
+- ⚪️ **Invalidated** — no trade, and why:
+  - price never came back to the entry within 8 candles (4h)
+  - price reached TP1 without touching the entry — the move went without this trade
+  - the 4H bias flipped against the setup before the entry filled
 
 The figures assume the plan was followed exactly as sent. They are also what the learner trains on.
+
+### Learning where the stop and targets go
+
+Which setups to take is only half of it. Every resolved setup is also replayed, on the same
+candles, under 12 alternative placements: the stop at 0.75x, 1x, 1.25x or 1.5x its distance, and TP1
+at 2R, 2.5R or 3R with TP2/TP3 moved in proportion. Entry, dollar risk, the liquidity cap and the
+1:2 gate are held fixed, so the comparison is like for like. The backtest records these for every
+historical trade; live setups get them once 48 hours of candles have passed.
+
+For each market group — volatility indices, jump indices, forex, and all together — the learner
+takes the earlier 70% of trades, picks the placement whose improvement over the current one is
+clearly above zero, then checks it on the later 30%. Only a placement that also wins there is
+adopted, and the alert then says so (📐). Anything that only worked on the trades it was chosen on is
+thrown away. `/learning` shows what has been adopted and why the rest was not.
 
 ### How likely is this setup?
 

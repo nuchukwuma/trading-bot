@@ -2,7 +2,7 @@
 
 const config = require('../config');
 const { learn } = require('./learner');
-const { resolvePending } = require('./outcomeTracker');
+const { resolvePending, recordVariants } = require('./outcomeTracker');
 const { rateSetup } = require('./rater');
 const ledger = require('./ledger');
 const { EdgeProfile } = require('../backtest/edgeProfile');
@@ -48,7 +48,7 @@ class LearningService {
   }
 
   /** Resolve outcomes for one instrument using candles already in hand. */
-  async resolve(instrument, candles, now) {
+  async resolve(instrument, candles, now, { bias = null } = {}) {
     const result = await resolvePending({
       db: this.db,
       instrument,
@@ -56,9 +56,18 @@ class LearningService {
       opts: { maxBars: this.cfg.maxBars, barSeconds: config.timeframes.ltfSeconds },
       now,
       onEvent: this.onTradeEvent,
+      currentBias: bias,
     });
     this.resolvedSinceLearn += result.resolved;
     if (result.resolved) this.ledgerStale = true;
+    const replayed = await recordVariants({
+      db: this.db,
+      instrument,
+      candles,
+      opts: { maxBars: this.cfg.maxBars, barSeconds: config.timeframes.ltfSeconds },
+      now,
+    }).catch(() => 0);
+    if (replayed) this.ledgerStale = true;
     return result;
   }
 

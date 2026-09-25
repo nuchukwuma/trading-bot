@@ -364,3 +364,24 @@ test('plan: forex sizing flows through end to end', () => {
   assert.match(plan.riskDistanceLabel, /12\.0 pips/);
   assert.match(plan.summary, /^BUY EURUSD @ 1\.10000 \| SL 1\.09880/);
 });
+
+test('plan: a learned stop scale moves the stop and targets but keeps the dollar risk', () => {
+  const input = {
+    instrument: VOL75,
+    direction: 'bullish',
+    entryPrice: 100000,
+    poi: { direction: 'bullish', top: 100100, bottom: 99900 },
+    sweep: { extreme: 99800 },
+  };
+  const base = buildTradePlan(input);
+  const wider = buildTradePlan({
+    ...input,
+    opts: { stopScale: 1.5, targets: require('../src/learn/planVariants').scaledLadder(2.5) },
+  });
+  assert.equal(wider.baseRiskDistance, 350);
+  assert.equal(wider.riskDistance, 525);
+  assert.equal(wider.stopPrice, 100000 - 525);
+  assert.equal(wider.targets[0].price, 100000 + 525 * 2.5);
+  assert.ok(wider.position.lots < base.position.lots, 'a wider stop means a smaller size');
+  assert.ok(Math.abs(wider.position.actualRiskUsd - base.position.actualRiskUsd) < 0.5);
+});

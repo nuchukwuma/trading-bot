@@ -14,6 +14,9 @@ const DEFAULTS = {
   pessimistic: true,
   // Swing lookback used when trailing the stop behind structure after TP2.
   trailLookback: 2,
+  // A limit entry is cancelled if price reaches TP1 before ever touching it:
+  // the move happened without the trade, and chasing it is a different trade.
+  cancelIfTargetBeforeFill: true,
 };
 
 /**
@@ -56,6 +59,7 @@ function simulateTrade({ plan, candles, signalClose, opts = {} }) {
   let exitBar = null;
   let mfe = 0;
   let mae = 0;
+  let invalidReason = null;
   const exits = [];
 
   const closeOut = (pct, price, reason, bar) => {
@@ -72,10 +76,18 @@ function simulateTrade({ plan, candles, signalClose, opts = {} }) {
     // ---- pending limit entry ----
     if (!filled) {
       const touched = bullish ? c.low <= entry + eps : c.high >= entry - eps;
+      const tp1 = plan.targets[0];
+      const ranAway = tp1 && (bullish ? c.high >= tp1.price - eps : c.low <= tp1.price + eps);
       if (touched) {
         filled = true;
         fillBar = i;
+      } else if (cfg.cancelIfTargetBeforeFill && ranAway) {
+        status = 'expired';
+        invalidReason = 'ran_to_target';
+        exitBar = i;
+        break;
       } else if (i >= cfg.maxBarsToFill - 1) {
+        invalidReason = 'no_fill';
         status = 'expired';
         exitBar = i;
         break;
@@ -150,7 +162,17 @@ function simulateTrade({ plan, candles, signalClose, opts = {} }) {
   }
 
   if (!filled) {
-    return { filled: false, status: 'expired', rMultiple: 0, exits: [], barsHeld: 0, mfe: 0, mae: 0 };
+    return {
+      filled: false,
+      status: 'expired',
+      // null while the fill window is still open (the candles simply ran out)
+      invalidReason,
+      rMultiple: 0,
+      exits: [],
+      barsHeld: 0,
+      mfe: 0,
+      mae: 0,
+    };
   }
 
   return {

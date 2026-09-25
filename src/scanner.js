@@ -30,6 +30,8 @@ class Scanner {
     this.db = opts.db || db;
     this.instruments = opts.instruments || config.instruments;
     this.lastCandles = new Map();
+    // Current 4H bias per instrument, so open setups can be cancelled on a flip.
+    this.lastBias = new Map();
     this.opts = opts.engineOpts || {};
     this.persist = opts.persist !== undefined ? opts.persist : config.db.enabled;
     this.edgeProfile =
@@ -68,7 +70,8 @@ class Scanner {
       for (const instrument of this.instruments) {
         const candles = this.lastCandles.get(instrument.id);
         if (!candles) continue;
-        await this.learning.resolve(instrument, candles, now / 1000).catch((err) => {
+        const bias = this.lastBias.get(instrument.id) || null;
+        await this.learning.resolve(instrument, candles, now / 1000, { bias }).catch((err) => {
           log.error(`${instrument.id} outcome resolution failed: ${err.message}`);
         });
       }
@@ -101,7 +104,10 @@ class Scanner {
 
     this.lastCandles.set(instrument.id, ltf);
 
-    const evaluation = evaluateSetup({ instrument, htf, ltf, engineOpts, rates });
+    // Learned stop/target placement for this market, when one was validated.
+    const planAdjust = this.edgeProfile.planFor ? this.edgeProfile.planFor(instrument.id) : null;
+    const evaluation = evaluateSetup({ instrument, htf, ltf, engineOpts, rates, planAdjust });
+    this.lastBias.set(instrument.id, evaluation.bias || null);
     if (!evaluation.ok) {
       return {
         instrumentId: instrument.id,

@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { matchesRules } = require('./analyze');
+const { adjustmentFor } = require('../learn/planLearner');
 const { createLogger } = require('../util/logger');
 
 const log = createLogger('edge-profile');
@@ -43,12 +44,16 @@ class EdgeProfile {
     }
   }
 
-  static save(filePath, { rules, validated, notes, train, test, unfilteredTest, meta = {} }) {
+  static save(filePath, { rules, validated, notes, train, test, unfilteredTest, plan = null, meta = {} }) {
     const payload = {
       version: PROFILE_VERSION,
       generatedAt: new Date().toISOString(),
       validated,
       rules,
+      // Learned stop/target placement per market group (planLearner.js).
+      // Each entry was validated on its own, so it applies even when the
+      // setup filter above has not been validated yet.
+      plan,
       notes,
       performance: { train, test, unfilteredTest },
       meta,
@@ -70,6 +75,11 @@ class EdgeProfile {
   get active() {
     if (!this.loaded) return false;
     return this.validated || this.enforceUnvalidated;
+  }
+
+  /** The learned stop/target placement for an instrument, or null for the default. */
+  planFor(instrumentId) {
+    return adjustmentFor(this.data && this.data.plan, instrumentId);
   }
 
   get rules() {

@@ -52,6 +52,7 @@ function fromAlertDocument(doc) {
     barsHeld: outcome.barsHeld || 0,
     mfe: outcome.mfe || 0,
     mae: outcome.mae || 0,
+    variants: doc.variants || null,
   };
 }
 

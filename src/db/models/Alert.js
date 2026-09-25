@@ -66,6 +66,8 @@ const AlertSchema = new mongoose.Schema(
       riskReward: Number,
       targets: [TargetSchema],
       obstacle: mongoose.Schema.Types.Mixed,
+      baseRiskDistance: Number,
+      adjustment: mongoose.Schema.Types.Mixed,
       lots: Number,
       riskUsd: Number,
       accountBalance: Number,
@@ -92,6 +94,9 @@ const AlertSchema = new mongoose.Schema(
     rating: mongoose.Schema.Types.Mixed,
     // The Telegram message, so trade updates can reply to it.
     telegramMessageId: Number,
+    // R under each alternative stop/target placement (src/learn/planVariants.js),
+    // filled in once a full review window of candles has passed.
+    variants: mongoose.Schema.Types.Mixed,
     // Where an open trade stands, refreshed every scan until it resolves.
     progress: {
       filled: Boolean,
@@ -113,6 +118,8 @@ const AlertSchema = new mongoose.Schema(
         index: true,
       },
       rMultiple: Number,
+      // For a setup that never became a trade: no_fill, ran_to_target, bias_flip.
+      invalidReason: String,
       closedAt: Date,
       notes: String,
       // 'simulator' when the bot resolved it from candles, 'manual' otherwise.

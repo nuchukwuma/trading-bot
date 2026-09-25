@@ -2,6 +2,7 @@
 
 const { summarize, welchTest, benjaminiHochberg } = require('../backtest/stats');
 const { matchesRules, applyRules } = require('../backtest/analyze');
+const { learnPlan } = require('./planLearner');
 
 const DEFAULTS = {
   minSamples: 30,
@@ -36,6 +37,14 @@ const BIAS_ORDER = ['weak', 'moderate', 'strong'];
  *    filter tightens as evidence accumulates, not before.
  */
 function learn(trades, opts = {}) {
+  const result = learnRules(trades, opts);
+  // Where the stop and targets go is learned alongside which setups to take.
+  result.plan = learnPlan(trades, { ...DEFAULTS, ...opts });
+  result.notes = [...result.notes, ...result.plan.notes];
+  return result;
+}
+
+function learnRules(trades, opts = {}) {
   const cfg = { ...DEFAULTS, ...opts };
   const notes = [];
   const ordered = [...trades].filter((t) => t.filled).sort((a, b) => a.time - b.time);
