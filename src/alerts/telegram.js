@@ -63,6 +63,7 @@ class TelegramClient {
       disable_web_page_preview: true,
     };
     if (opts.replyMarkup) payload.reply_markup = opts.replyMarkup;
+    if (opts.replyTo) payload.reply_parameters = { message_id: opts.replyTo, allow_sending_without_reply: true };
 
     let lastError = null;
     for (let attempt = 0; attempt <= this.retries; attempt += 1) {

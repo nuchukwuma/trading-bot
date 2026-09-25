@@ -3,6 +3,7 @@
 const config = require('../config');
 const { formatPrice, formatDistance, formatMoney, formatLots } = require('../util/format');
 const { formatUtc } = require('../util/time');
+const { describeRating } = require('../learn/rater');
 
 const escapeHtml = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -28,6 +29,11 @@ function formatAlert(alert) {
       bias.strength
     )})</i>`
   );
+  const rating = describeRating(alert.rating);
+  if (rating.length) {
+    lines.push('');
+    lines.push(...rating);
+  }
   lines.push('');
 
   lines.push('<b>Trade plan</b>');

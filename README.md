@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 318 unit tests, no network or database needed
+npm test                 # 331 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -52,6 +52,34 @@ messages from anyone else are ignored.
 | `/pause` / `/resume` | Stop / restart all alerts |
 | `/status` | Last and next scan, which pairs are on, whether the database is connected |
 | `/scan` | Run a scan now |
+| `/trades` | Trades running (with live R) or waiting for their entry |
+| `/results 30` | How sent alerts played out over the last N days (default 7): wins, R, dollars |
+| `/learning` | How many trades it has learned from and what it filters on |
+
+### Following every alert to the end
+
+Every sent alert is followed on each 30m close until it plays out, and the updates arrive as
+replies to the original alert — whether you took the trade or not:
+
+- ▶️ **Entry triggered** — price reached the limit entry
+- 🎯 **TP1 / TP2 hit** — with what to do next (stop to breakeven, trail) and the running R
+- ✅ **Win**, ❌ **Stopped out**, ⏱ **closed at the 48h window** — with the result in R and dollars
+- ⚪️ **Invalidated** — the entry was not reached within 8 candles (4h), so there was no trade
+
+The figures assume the plan was followed exactly as sent. They are also what the learner trains on.
+
+### How likely is this setup?
+
+Each alert carries a rating from the bot's own record of similar trades — the same pair at the same
+score if there are enough of those, otherwise a wider group (the pair at any score, then the same
+market type, then everything):
+
+- 🟢 **High probability** — even the pessimistic end of the 95% range on average R is profitable
+- 🟡 **No clear edge yet** — the evidence does not point either way
+- 🔴 **Low probability** — even the optimistic end loses
+- ⚪️ **Not enough history yet** — fewer than 30 similar resolved trades
+
+The line under it shows the group, how many trades, how many were live, the win rate and average R.
 
 A pair that is off is still scanned and its setups are still tracked and learned from, exactly like
 setups the edge profile holds back — you just do not get the message. Choices are saved in MongoDB,

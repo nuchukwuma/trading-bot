@@ -129,3 +129,26 @@ test('control: /status and /scan report back', async () => {
   assert.match(done, /1 setup\(s\) on pairs that are off/);
   assert.match(done, /VOL75 \(x\)/);
 });
+
+test('control: /trades, /results and /learning use the reports, or explain without a database', async () => {
+  const { control, sent, say } = build();
+  await say('/trades');
+  assert.match(sent.at(-1).text, /needs MongoDB/);
+
+  const asked = [];
+  control.reports = {
+    trades: async () => 'OPEN',
+    results: async (days) => {
+      asked.push(days);
+      return 'RESULTS';
+    },
+    learning: async () => 'LEARNING',
+  };
+  await say('/trades');
+  assert.equal(sent.at(-1).text, 'OPEN');
+  await say('/results 30');
+  await say('/results');
+  assert.deepEqual(asked, [30, 7]);
+  await say('/learning');
+  assert.equal(sent.at(-1).text, 'LEARNING');
+});

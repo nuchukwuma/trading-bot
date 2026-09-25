@@ -340,3 +340,31 @@ test('format: an enforced edge profile is credited in the alert', () => {
   assert.equal(/backtested profile/.test(formatAlert(noProfile)), false);
   assert.equal(/✔/.test(formatAlert(sampleAlert())), false);
 });
+
+test('format: the alert carries its probability rating', () => {
+  const msg = formatAlert(
+    sampleAlert({
+      rating: {
+        grade: 'high',
+        cohort: 'EURUSD at 5/6',
+        n: 48,
+        live: 12,
+        winRate: 0.56,
+        expectancy: 0.61,
+        expectancyLower: 0.12,
+        expectancyUpper: 1.1,
+      },
+    })
+  );
+  assert.match(msg, /🟢 <b>High probability<\/b>/);
+  assert.match(msg, /EURUSD at 5\/6: 48 trades \(12 live, 36 backtest\) · won 56%/);
+});
+
+test('alert service: delivery returns the Telegram message id for threading updates', async () => {
+  const svc = new AlertService({
+    telegram: { sendMessage: async () => [{ message_id: 777 }] },
+    dryRun: false,
+  });
+  const out = await svc.deliver(sampleAlert());
+  assert.equal(out.messageId, 777);
+});

@@ -42,6 +42,8 @@ class Scanner {
     this.learning = opts.learning || null;
     // Per-pair on/off and pause, set from Telegram (src/control).
     this.settings = opts.settings || null;
+    // Anything with rate(setup) -> rating; normally the LearningService.
+    this.rater = opts.rater || null;
   }
 
   async scanAll(now = Date.now()) {
@@ -143,6 +145,18 @@ class Scanner {
       biasStrength: bias.strength,
     });
     alert.edgeProfile = { matched: verdict.allow, reason: verdict.reason, active: this.edgeProfile.active };
+    if (this.rater) {
+      try {
+        alert.rating = this.rater.rate({
+          instrumentId: instrument.id,
+          instrumentKind: instrument.kind,
+          direction: bias.direction,
+          score: scoring.score,
+        });
+      } catch (err) {
+        log.warn(`${instrument.id} could not be rated: ${err.message}`);
+      }
+    }
 
     // A pair switched off (or alerts paused) from Telegram takes the same
     // path as a held-back setup: tracked and learned from, just not sent.
@@ -187,6 +201,7 @@ class Scanner {
     const delivery = await this.alerts.deliver(alert, now);
 
     let record = null;
+    if (delivery.messageId) alert.telegramMessageId = delivery.messageId;
     if (this.persist && delivery.skipped !== 'duplicate') {
       record = await this.db.logAlert(alert, { delivered: delivery.sent }).catch((err) => {
         log.error(`failed to log alert: ${err.message}`);

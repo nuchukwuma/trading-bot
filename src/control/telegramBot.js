@@ -13,10 +13,15 @@ const HELP = [
   '/only EURUSD GBPUSD — alerts for these pairs and nothing else',
   '/all — every pair on',
   '/pause — stop all alerts · /resume — start again',
+  '/trades — trades running or waiting for entry',
+  '/results — how recent alerts played out (/results 30 for 30 days)',
+  '/learning — what the bot has learned so far',
   '/status — last scan, next scan, what is on',
   '/scan — run a scan now',
   '',
   'Pairs that are off are still scanned and tracked, so learning keeps going — you just do not get the message.',
+  '',
+  'Every alert is followed until it plays out: you get a reply when the entry triggers, at each target, and when it wins, stops out or is invalidated — whether you took it or not.',
 ].join('\n');
 
 const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -32,7 +37,17 @@ const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').rep
  * (HTTP 409), so stop one of them.
  */
 class TelegramControl {
-  constructor({ telegram, settings, getStatus = () => ({}), runScan = null, chatId, pollTimeoutSec = 50 }) {
+  constructor({
+    telegram,
+    settings,
+    getStatus = () => ({}),
+    runScan = null,
+    chatId,
+    pollTimeoutSec = 50,
+    reports = {},
+  }) {
+    // reports.trades() / reports.results(days) / reports.learning() -> text
+    this.reports = reports;
     this.telegram = telegram;
     this.settings = settings;
     this.getStatus = getStatus;
@@ -50,6 +65,9 @@ class TelegramControl {
       await this.telegram.call('setMyCommands', {
         commands: [
           { command: 'pairs', description: 'Choose which pairs send alerts' },
+          { command: 'trades', description: 'Trades running or waiting for entry' },
+          { command: 'results', description: 'How recent alerts played out' },
+          { command: 'learning', description: 'What the bot has learned so far' },
           { command: 'status', description: 'Last scan, next scan, what is on' },
           { command: 'scan', description: 'Run a scan now' },
           { command: 'pause', description: 'Stop all alerts' },
@@ -143,9 +161,24 @@ class TelegramControl {
         return reply(`▶️ Alerts resumed for ${this.settings.enabledIds().length} pair(s).`);
       case '/scan':
         return this._scanNow(reply);
+      case '/trades':
+      case '/open':
+        return reply(await this._report('trades'));
+      case '/results': {
+        const days = Math.min(Math.max(parseInt(args[0], 10) || 7, 1), 365);
+        return reply(await this._report('results', days));
+      }
+      case '/learning':
+        return reply(await this._report('learning'));
       default:
         return reply('Unknown command. /help lists them.');
     }
+  }
+
+  async _report(name, ...args) {
+    const fn = this.reports[name];
+    if (!fn) return 'This needs MongoDB — the bot is running without a database.';
+    return fn(...args);
   }
 
   async _setPairs(cmd, args) {

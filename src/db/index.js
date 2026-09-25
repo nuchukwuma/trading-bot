@@ -81,6 +81,8 @@ function toDocument(alert, { delivered = false, shadow = false } = {}) {
     features: alert.features || [],
     shadow: Boolean(shadow),
     edgeProfileReason: alert.edgeProfile ? alert.edgeProfile.reason : undefined,
+    rating: alert.rating || undefined,
+    telegramMessageId: alert.telegramMessageId || undefined,
     outcome: { status: 'pending' },
   };
 }
@@ -122,6 +124,34 @@ async function recentAlerts({ sinceMinutes = config.alerts.dedup.ttlMinutes, lim
     .lean();
 }
 
+async function updateProgress(alertId, progress) {
+  if (!isConnected()) return null;
+  return Alert.updateOne({ _id: alertId }, { $set: { progress } });
+}
+
+/** Alerts that were sent and have not played out yet, oldest first. */
+async function openAlerts({ limit = 50 } = {}) {
+  if (!isConnected()) return [];
+  return Alert.find({ 'outcome.status': 'pending', delivered: true, shadow: { $ne: true } })
+    .sort({ candleTime: 1 })
+    .limit(limit)
+    .lean();
+}
+
+/** Sent alerts that have played out, newest first. */
+async function closedAlerts({ limit = 10, since = null } = {}) {
+  if (!isConnected()) return [];
+  const q = { 'outcome.status': { $ne: 'pending' }, delivered: true, shadow: { $ne: true } };
+  if (since) q['outcome.closedAt'] = { $gte: since };
+  return Alert.find(q).sort({ 'outcome.closedAt': -1 }).limit(limit).lean();
+}
+
+/** Setups on pairs that are muted or held back, still being tracked. */
+async function countTrackedShadows() {
+  if (!isConnected()) return 0;
+  return Alert.countDocuments({ 'outcome.status': 'pending', shadow: true });
+}
+
 async function recordOutcome(alertId, outcome) {
   if (!isConnected()) return null;
   return Alert.findByIdAndUpdate(
@@ -159,6 +189,10 @@ async function setSetting(key, value) {
 }
 
 module.exports = {
+  updateProgress,
+  openAlerts,
+  closedAlerts,
+  countTrackedShadows,
   getSetting,
   setSetting,
   connect,

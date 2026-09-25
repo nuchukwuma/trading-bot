@@ -87,6 +87,21 @@ const AlertSchema = new mongoose.Schema(
     shadow: { type: Boolean, default: false, index: true },
     edgeProfileReason: String,
 
+    // How setups like this one have done so far (src/learn/rater.js), at the
+    // time the alert was sent.
+    rating: mongoose.Schema.Types.Mixed,
+    // The Telegram message, so trade updates can reply to it.
+    telegramMessageId: Number,
+    // Where an open trade stands, refreshed every scan until it resolves.
+    progress: {
+      filled: Boolean,
+      targetsHit: [String],
+      currentR: Number,
+      lastPrice: Number,
+      barsSinceSignal: Number,
+      updatedAt: Date,
+    },
+
     // Filled in later for win-rate review. Never written by the scanner.
     outcome: {
       status: {

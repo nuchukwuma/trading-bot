@@ -561,3 +561,25 @@ test('outcomes: a feed that has stopped entirely is eventually closed out', asyn
   assert.equal(result.resolved, 1);
   assert.equal(db.recorded[0].outcome.status, 'timeout');
 });
+
+test('edge profile: learned feature rules apply to live setups', () => {
+  const profile = new EdgeProfile({
+    version: 1,
+    validated: true,
+    rules: {
+      minScore: 3,
+      requiredConfirmations: [],
+      requiredFeatures: ['pattern:pin_bar_bull'],
+      excludedFeatures: ['session:asia'],
+      minBiasStrength: null,
+      disabledInstruments: [],
+      allowedDirections: null,
+    },
+  });
+  const base = { instrumentId: 'X', direction: 'bullish', score: 4, confirmations: [], biasStrength: 'strong' };
+  assert.equal(profile.evaluate({ ...base, features: ['pattern:pin_bar_bull'] }).allow, true);
+  assert.equal(profile.evaluate({ ...base, features: [] }).allow, false);
+  const excluded = profile.evaluate({ ...base, features: ['pattern:pin_bar_bull', 'session:asia'] });
+  assert.equal(excluded.allow, false);
+  assert.match(excluded.reason, /session:asia/);
+});
