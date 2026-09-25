@@ -40,6 +40,8 @@ class Scanner {
       });
     this.shadowLogging = opts.shadowLogging !== undefined ? opts.shadowLogging : config.learn.shadowLogging;
     this.learning = opts.learning || null;
+    // Per-pair on/off and pause, set from Telegram (src/control).
+    this.settings = opts.settings || null;
   }
 
   async scanAll(now = Date.now()) {
@@ -142,7 +144,11 @@ class Scanner {
     });
     alert.edgeProfile = { matched: verdict.allow, reason: verdict.reason, active: this.edgeProfile.active };
 
-    if (!verdict.allow) {
+    // A pair switched off (or alerts paused) from Telegram takes the same
+    // path as a held-back setup: tracked and learned from, just not sent.
+    const muted = verdict.allow && this.settings && !this.settings.shouldAlert(instrument.id);
+
+    if (!verdict.allow || muted) {
       // Held back from the user, but still tracked and learned from. Without
       // this the bot would only ever see outcomes for trades it already
       // believed in, and the filter could never discover it was wrong.
@@ -157,13 +163,18 @@ class Scanner {
           });
         shadowId = record ? String(record._id) : null;
       }
-      log.debug(`${instrument.id} held back by edge profile: ${verdict.reason}`);
+      const reason = muted
+        ? this.settings.paused
+          ? 'Alerts paused from Telegram'
+          : 'Pair switched off from Telegram'
+        : verdict.reason;
+      log.debug(`${instrument.id} held back: ${reason}`);
       return {
         instrumentId: instrument.id,
         fired: false,
         shadowed: true,
-        stage: 'gate:edge',
-        reason: verdict.reason,
+        stage: muted ? 'muted' : 'gate:edge',
+        reason,
         recordId: shadowId,
         alert,
         bias,

@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const config = require('../config');
 const Alert = require('./models/Alert');
+const Setting = require('./models/Setting');
 const { createLogger } = require('../util/logger');
 
 const log = createLogger('db');
@@ -148,7 +149,18 @@ async function performanceSummary({ instrumentId = null } = {}) {
   ]);
 }
 
+async function getSetting(key) {
+  const doc = await Setting.findOne({ key }).lean();
+  return doc ? doc.value : undefined;
+}
+
+async function setSetting(key, value) {
+  await Setting.updateOne({ key }, { $set: { value } }, { upsert: true });
+}
+
 module.exports = {
+  getSetting,
+  setSetting,
   connect,
   disconnect,
   isConnected,

@@ -7,6 +7,8 @@ const db = require('./db');
 const { createLogger } = require('./util/logger');
 const { msUntilNextBoundary, formatUtc } = require('./util/time');
 const { parseHours, startServer, startKeepAwake } = require('./server');
+const { AlertSettings } = require('./control/settings');
+const { TelegramControl } = require('./control/telegramBot');
 
 const log = createLogger('bot');
 
@@ -97,8 +99,17 @@ async function main() {
     }
   }
 
+  // Which pairs alert, chosen from Telegram; kept in MongoDB when available.
+  scanner.settings = await new AlertSettings({
+    instruments: config.instruments,
+    db: scanner.persist ? db : null,
+  }).load();
+  if (scanner.settings.muted.size) log.info(`alerts off for: ${[...scanner.settings.muted].join(', ')}`);
+  if (scanner.settings.paused) log.warn('alerts are paused from Telegram — /resume to start again');
+
   let stopping = false;
   let timer = null;
+  let control = null;
 
   const shutdown = async (signal) => {
     if (stopping) return;
@@ -106,6 +117,7 @@ async function main() {
     log.info(`${signal} received — shutting down`);
     if (timer) clearTimeout(timer);
     if (keepAwake) keepAwake.stop();
+    if (control) control.stop();
     if (server) server.close();
     scanner.close();
     await db.disconnect().catch(() => {});
@@ -114,17 +126,26 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
+  // Scheduled scans and /scan from Telegram share this; a second call while
+  // one is running returns null instead of overlapping.
+  let scanning = false;
   const runScan = async () => {
+    if (scanning) return null;
+    scanning = true;
     const started = Date.now();
+    let results = [];
     try {
-      await scanner.scanAll(started);
+      results = await scanner.scanAll(started);
     } catch (err) {
       log.error(`scan pass failed: ${err.message}`);
+    } finally {
+      scanning = false;
     }
     status.scans += 1;
     status.lastScanAt = new Date(started).toISOString();
     status.lastScanMs = Date.now() - started;
     log.debug(`scan took ${status.lastScanMs}ms`);
+    return results;
   };
 
   if (runOnce) {
@@ -145,6 +166,17 @@ async function main() {
       scheduleNext();
     }, wait);
   };
+
+  const tg = config.alerts.telegram;
+  if (tg.commands && scanner.alerts.telegram.configured) {
+    control = await new TelegramControl({
+      telegram: scanner.alerts.telegram,
+      settings: scanner.settings,
+      chatId: tg.chatId,
+      runScan,
+      getStatus: () => ({ ...status, database: scanner.persist }),
+    }).start();
+  }
 
   if (config.scheduler.scanOnStart) await runScan();
   scheduleNext();
