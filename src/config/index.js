@@ -123,6 +123,8 @@ const config = {
         .replace(/^['"]|['"]$/g, ''),
       apiUrl: process.env.TELEGRAM_API_URL || 'https://api.telegram.org',
       parseMode: 'HTML',
+      // Accept commands (/pairs, /status, ...) from TELEGRAM_CHAT_ID.
+      commands: bool(process.env.TELEGRAM_COMMANDS, true),
     },
     dedup: {
       // Same instrument + direction + POI cannot re-fire inside this window.

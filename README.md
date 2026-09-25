@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 308 unit tests, no network or database needed
+npm test                 # 318 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -36,6 +36,31 @@ Set `DRY_RUN=1` to format and log alerts without sending them to Telegram.
 | `OANDA_API_KEY` / `OANDA_ACCOUNT_ID` | Only with `FOREX_SOURCE=oanda`. OANDA practice accounts are not open in every country. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | From @BotFather, and the chat to post into. |
 | `MONGODB_URI` | Where alerts are logged. Set `DB_ENABLED=0` to run without it. |
+
+## Controlling it from Telegram
+
+The bot takes commands in the same chat the alerts go to. Only `TELEGRAM_CHAT_ID` is obeyed;
+messages from anyone else are ignored.
+
+| Command | What it does |
+| --- | --- |
+| `/pairs` | Buttons for every pair — tap to turn its alerts on or off, or All on / All off |
+| `/on EURUSD GBPUSD` | Turn pairs on. Names are forgiving: `eurusd`, `EUR/USD`, `vol75` all work |
+| `/off VOL75` | Turn pairs off |
+| `/only EURUSD GBPUSD` | These pairs and nothing else |
+| `/all` | Every pair on |
+| `/pause` / `/resume` | Stop / restart all alerts |
+| `/status` | Last and next scan, which pairs are on, whether the database is connected |
+| `/scan` | Run a scan now |
+
+A pair that is off is still scanned and its setups are still tracked and learned from, exactly like
+setups the edge profile holds back — you just do not get the message. Choices are saved in MongoDB,
+so they survive restarts; without a database they reset when the bot restarts.
+
+Commands use long polling, so no public URL or webhook is needed. Telegram allows only **one**
+process per bot token to read commands: if the bot runs on Render and on your computer at the same
+time, the second logs an HTTP 409 warning and its commands do not work. Stop one of them, or set
+`TELEGRAM_COMMANDS=0` on the copy that should only send alerts.
 
 ## How a setup is found
 
@@ -383,6 +408,7 @@ src/
   evaluate.js  the single decision path shared by the live scanner and the backtest
   scanner.js   the per-instrument pipeline
   server.js    status/health HTTP server and keep-awake pinger (Render)
+  control/     Telegram commands and the per-pair on/off settings
   index.js     scheduler and entry point
 tests/         unit tests per module
 ```

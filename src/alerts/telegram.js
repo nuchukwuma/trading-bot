@@ -7,8 +7,8 @@ const log = createLogger('alerts:telegram');
 const MAX_MESSAGE_LENGTH = 4096;
 
 /**
- * Minimal Telegram Bot API client — only sendMessage is used, so the bot can
- * run on a token with no other permissions.
+ * Minimal Telegram Bot API client: sendMessage for alerts, plus `call` for
+ * the few methods the command handler needs.
  */
 class TelegramClient {
   constructor(opts = {}) {
@@ -36,6 +36,24 @@ class TelegramClient {
     return results;
   }
 
+  /**
+   * Call any Bot API method once, no retries. Used by the command handler
+   * (getUpdates, answerCallbackQuery, editMessageText...).
+   */
+  async call(method, payload = {}, { signal } = {}) {
+    const res = await this.fetchImpl(`${this.cfg.apiUrl}/bot${this.cfg.botToken}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.ok) return json.result;
+    const err = new Error(`Telegram ${res.status}: ${json.description || res.statusText || `${method} failed`}`);
+    err.status = res.status;
+    throw err;
+  }
+
   async _sendOne(text, opts) {
     const url = `${this.cfg.apiUrl}/bot${this.cfg.botToken}/sendMessage`;
     const payload = {
@@ -44,6 +62,7 @@ class TelegramClient {
       parse_mode: opts.parseMode || this.cfg.parseMode,
       disable_web_page_preview: true,
     };
+    if (opts.replyMarkup) payload.reply_markup = opts.replyMarkup;
 
     let lastError = null;
     for (let attempt = 0; attempt <= this.retries; attempt += 1) {

@@ -409,3 +409,27 @@ test('scanner: with no profile at all, behaviour is unchanged', async () => {
   assert.equal(result.fired, true);
   assert.equal(sent.length, 1);
 });
+
+const { AlertSettings } = require('../src/control/settings');
+
+test('scanner: a pair switched off from Telegram is tracked but not sent', async () => {
+  const settings = new AlertSettings({ instruments: [TEST_INSTRUMENT] });
+  await settings.setEnabled('TEST', false);
+  const { scanner, sent, logged } = buildScanner({ settings, edgeProfile: new EdgeProfile(null) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.fired, false);
+  assert.equal(result.stage, 'muted');
+  assert.equal(sent.length, 0);
+  assert.equal(logged.length, 1, 'still logged as a shadow setup for learning');
+  assert.equal(logged[0].shadow, true);
+});
+
+test('scanner: pausing holds every alert back', async () => {
+  const settings = new AlertSettings({ instruments: [TEST_INSTRUMENT] });
+  await settings.setPaused(true);
+  const { scanner, sent } = buildScanner({ settings, edgeProfile: new EdgeProfile(null) });
+  const [result] = await scanner.scanAll();
+  assert.equal(result.stage, 'muted');
+  assert.match(result.reason, /paused/);
+  assert.equal(sent.length, 0);
+});
