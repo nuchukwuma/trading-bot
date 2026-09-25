@@ -3,6 +3,7 @@
 const config = require('../config');
 const { learn } = require('./learner');
 const { resolvePending } = require('./outcomeTracker');
+const { rateSetup } = require('./rater');
 const ledger = require('./ledger');
 const { EdgeProfile } = require('../backtest/edgeProfile');
 const { createLogger } = require('../util/logger');
@@ -24,6 +25,26 @@ class LearningService {
     this.seedPath = opts.seedPath || config.learn.seedPath;
     this.resolvedSinceLearn = 0;
     this.onProfileChange = opts.onProfileChange || (() => {});
+    // Called with (alertDocument, event) as a trade fills, pays a target, or
+    // plays out — the scanner's owner turns these into Telegram messages.
+    this.onTradeEvent = opts.onTradeEvent || null;
+    this.kindOf = opts.kindOf || (() => null);
+    this.trades = [];
+    this.ledgerStale = true;
+  }
+
+  /** Backtest seed + every resolved live setup, merged and de-duplicated. */
+  async loadLedger() {
+    const seed = ledger.loadBacktestTrades(this.seedPath);
+    const live = (await this.db.resolvedAlerts({ limit: this.cfg.maxLedgerTrades })).map(ledger.fromAlertDocument);
+    this.trades = ledger.mergeLedger(seed, live);
+    this.ledgerStale = false;
+    return this.trades;
+  }
+
+  /** How setups like this one have done so far. See rater.js. */
+  rate(setup) {
+    return rateSetup(this.trades, setup, { minSamples: this.cfg.minSamples, kindOf: this.kindOf });
   }
 
   /** Resolve outcomes for one instrument using candles already in hand. */
@@ -34,8 +55,10 @@ class LearningService {
       candles,
       opts: { maxBars: this.cfg.maxBars, barSeconds: config.timeframes.ltfSeconds },
       now,
+      onEvent: this.onTradeEvent,
     });
     this.resolvedSinceLearn += result.resolved;
+    if (result.resolved) this.ledgerStale = true;
     return result;
   }
 
@@ -48,11 +71,11 @@ class LearningService {
    * profile. Returns null when there was nothing new to learn from.
    */
   async relearn({ force = false } = {}) {
+    // Ratings use the latest outcomes even between re-learns.
+    if (this.ledgerStale) await this.loadLedger();
     if (!force && !this.dueForRelearn) return null;
 
-    const seed = ledger.loadBacktestTrades(this.seedPath);
-    const live = (await this.db.resolvedAlerts({ limit: this.cfg.maxLedgerTrades })).map(ledger.fromAlertDocument);
-    const trades = ledger.mergeLedger(seed, live);
+    const trades = await this.loadLedger();
     const summary = ledger.ledgerSummary(trades);
 
     if (!trades.length) {

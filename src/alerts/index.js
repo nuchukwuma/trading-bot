@@ -45,10 +45,11 @@ class AlertService {
       return { sent: false, skipped: 'dry-run', message };
     }
 
-    await this.telegram.sendMessage(message);
+    const sent = await this.telegram.sendMessage(message);
     this.dedup.record(fingerprint, now);
     log.info(`alert sent: ${formatAlertLine(alert)}`);
-    return { sent: true, message };
+    const first = Array.isArray(sent) ? sent[0] : null;
+    return { sent: true, message, messageId: first && first.message_id };
   }
 
   /**

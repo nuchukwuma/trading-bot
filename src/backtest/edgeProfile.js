@@ -97,6 +97,10 @@ class EdgeProfile {
       biasStrength: setup.biasStrength,
       direction: setup.direction,
       instrumentId: setup.instrumentId,
+      // Learned chart-pattern/context rules match on these. Dropping them made
+      // a required-feature rule block every live setup and an excluded one
+      // never apply.
+      features: setup.features || [],
     };
 
     if (matchesRules(candidate, this.rules)) {
@@ -111,6 +115,7 @@ class EdgeProfile {
       parts.push(`has ${this.rules.requiredConfirmations.join(' + ')}`);
     }
     if (this.rules.minBiasStrength) parts.push(`${setup.biasStrength} bias`);
+    if ((this.rules.requiredFeatures || []).length) parts.push(`shows ${this.rules.requiredFeatures.join(' + ')}`);
     return `Matches the backtested profile (${parts.join(', ')})`;
   }
 
@@ -132,6 +137,11 @@ class EdgeProfile {
     if (missing.length) {
       return `Missing confirmation(s) the backtest found necessary: ${missing.join(', ')}`;
     }
+    const features = setup.features || [];
+    const lacking = (r.requiredFeatures || []).filter((f) => !features.includes(f));
+    if (lacking.length) return `Lacks the pattern(s) the bot learned pay: ${lacking.join(', ')}`;
+    const bad = (r.excludedFeatures || []).filter((f) => features.includes(f));
+    if (bad.length) return `Shows pattern(s) the bot learned lose: ${bad.join(', ')}`;
     return 'Does not match the backtested profile';
   }
 
@@ -143,6 +153,8 @@ class EdgeProfile {
     if (r.requiredConfirmations.length) bits.push(`requires ${r.requiredConfirmations.join(' + ')}`);
     if (r.minBiasStrength) bits.push(`bias >= ${r.minBiasStrength}`);
     if (r.disabledInstruments.length) bits.push(`excludes ${r.disabledInstruments.join(', ')}`);
+    if ((r.requiredFeatures || []).length) bits.push(`needs ${r.requiredFeatures.join(' + ')}`);
+    if ((r.excludedFeatures || []).length) bits.push(`avoids ${r.excludedFeatures.join(', ')}`);
     const state = this.validated ? 'validated' : this.enforceUnvalidated ? 'UNVALIDATED, enforced anyway' : 'UNVALIDATED, not enforced';
     return `${bits.join(', ')} (${state}, generated ${this.data.generatedAt})`;
   }

@@ -9,6 +9,9 @@ const { msUntilNextBoundary, formatUtc } = require('./util/time');
 const { parseHours, startServer, startKeepAwake } = require('./server');
 const { AlertSettings } = require('./control/settings');
 const { TelegramControl } = require('./control/telegramBot');
+const { formatTradeEvent, formatOpenTrades, formatResults } = require('./alerts/tradeUpdates');
+const { rateSetup } = require('./learn/rater');
+const { loadBacktestTrades } = require('./learn/ledger');
 
 const log = createLogger('bot');
 
@@ -67,6 +70,14 @@ async function main() {
   const scanner = new Scanner();
   if (config.learn.enabled && config.db.enabled) {
     scanner.learning = new LearningService({
+      kindOf: (id) => (config.instrumentById(id) || {}).kind || null,
+      // Follow every SENT alert to its end and tell the user, replying to the
+      // original message. Shadow setups are tracked silently.
+      onTradeEvent: async (doc, event) => {
+        if (!doc.delivered || doc.shadow || config.dryRun) return;
+        if (!scanner.alerts.telegram.configured) return;
+        await scanner.alerts.telegram.sendMessage(formatTradeEvent(doc, event), { replyTo: doc.telegramMessageId });
+      },
       onProfileChange: (result) =>
         log.warn(
           `the alert filter has changed — now ${result.growth.featureRulesUsed} feature rule(s) ` +
@@ -97,6 +108,21 @@ async function main() {
       log.error(`MongoDB unavailable (${err.message}) — continuing without persistence`);
       scanner.persist = false;
     }
+  }
+
+  // Rate each alert against how similar setups have done. With the learner,
+  // that is backtest + live outcomes; without a database, the backtest only.
+  if (scanner.learning && scanner.persist) {
+    const trades = await scanner.learning.loadLedger().catch((err) => {
+      log.warn(`could not load the trade ledger: ${err.message}`);
+      return [];
+    });
+    scanner.rater = scanner.learning;
+    log.info(`ratings use ${trades.length} resolved trade(s)`);
+  } else {
+    const seed = loadBacktestTrades(config.learn.seedPath);
+    const kindOf = (id) => (config.instrumentById(id) || {}).kind || null;
+    scanner.rater = { rate: (setup) => rateSetup(seed, setup, { minSamples: config.learn.minSamples, kindOf }) };
   }
 
   // Which pairs alert, chosen from Telegram; kept in MongoDB when available.
@@ -175,11 +201,62 @@ async function main() {
       chatId: tg.chatId,
       runScan,
       getStatus: () => ({ ...status, database: scanner.persist }),
+      reports: scanner.persist
+        ? {
+            trades: async () =>
+              formatOpenTrades(await db.openAlerts(), {
+                shadowCount: await db.countTrackedShadows(),
+                nextScanAt: status.nextScanAt,
+              }),
+            results: async (days) =>
+              formatResults(await db.closedAlerts({ limit: 200, since: new Date(Date.now() - days * 86400000) }), {
+                days,
+              }),
+            learning: async () => describeLearning(scanner),
+          }
+        : {},
     }).start();
   }
 
   if (config.scheduler.scanOnStart) await runScan();
   scheduleNext();
+}
+
+/** /learning — how much the bot has seen and what it filters on. */
+function describeLearning(scanner) {
+  const trades = (scanner.learning && scanner.learning.trades) || [];
+  const filled = trades.filter((t) => t.filled);
+  const live = filled.filter((t) => t.source && t.source !== 'backtest').length;
+  const profile = scanner.edgeProfile;
+  const growth = profile.loaded && profile.data.meta && profile.data.meta.growth;
+  const lines = [
+    '<b>Learning</b>',
+    `Resolved trades: ${filled.length} (${live} live, ${filled.length - live} backtest)`,
+  ];
+  if (!profile.loaded) {
+    lines.push('Filter: none yet — every setup that passes the rules is sent.');
+  } else {
+    lines.push(`Filter: ${profile.describe()}`);
+    lines.push(
+      profile.active
+        ? '✅ Validated on trades it was not fitted to — only setups that match it are sent.'
+        : '⚠️ Not validated yet, so it is not applied — every setup that passes the rules is sent.'
+    );
+  }
+  if (growth) {
+    lines.push(
+      `Pattern rules: ${growth.featureRulesUsed} of ${growth.featureRuleBudget} allowed at this sample size; ` +
+        `one more is allowed at ${growth.nextRuleAt} trades.`
+    );
+  }
+  const minSamples = config.learn.minSamples;
+  if (filled.length < minSamples) {
+    lines.push(`It starts judging once ${minSamples} trades have resolved.`);
+  } else {
+    lines.push(`It re-learns after every ${config.learn.relearnEvery} new results.`);
+  }
+  lines.push('', '<i>Each alert carries a rating from these results: 🟢 high probability, 🟡 no clear edge yet, 🔴 low, ⚪️ not enough history.</i>');
+  return lines.join('\n');
 }
 
 if (require.main === module) {
