@@ -55,6 +55,8 @@ function evaluateSetup({ instrument, htf, ltf, engineOpts = {}, rates = {}, plan
     instrument,
     direction: bias.direction,
     entryPrice: scoring.entryPrice,
+    // Where price is now, so a setup whose move already happened is refused.
+    price: scoring.price,
     poi: scoring.entryPoi,
     sweep: sweepCheck && sweepCheck.details ? sweepCheck.details.sweep : null,
     swings: scoring.ltfStructure.swings,
