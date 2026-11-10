@@ -495,3 +495,25 @@ test('scanner: playbook-only mode leaves pairs without a proven playbook alone',
   assert.equal(r.fired, true);
   assert.equal(sent.length, 1);
 });
+
+test('scanner: a sent alert carries the demo-account line and is taken by the account', async () => {
+  const { PaperAccount } = require('../src/paper/account');
+  const paper = new PaperAccount({ db: null });
+  await paper.deposit(20);
+  const { scanner, sent } = buildScanner({ paper, edgeProfile: new EdgeProfile(null) });
+  const [r] = await scanner.scanAll();
+  assert.equal(r.fired, true);
+  assert.match(sent[0], /📒 <i>Demo account: risking \$3\.00 of \$20\.00 \(\$17\.00 free after this\)/);
+  assert.deepEqual(Object.keys(paper.state.open), ['rec1']);
+});
+
+test('scanner: a setup held back (pair switched off) is never taken by the demo account', async () => {
+  const { PaperAccount } = require('../src/paper/account');
+  const paper = new PaperAccount({ db: null });
+  await paper.deposit(20);
+  const settings = new AlertSettings({ instruments: [TEST_INSTRUMENT] });
+  await settings.setEnabled('TEST', false);
+  const { scanner } = buildScanner({ paper, settings, edgeProfile: new EdgeProfile(null) });
+  await scanner.scanAll();
+  assert.deepEqual(paper.state.open, {});
+});

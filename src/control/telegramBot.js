@@ -21,6 +21,14 @@ const HELP = [
   '/playbook only — on pairs with a proven playbook, send only matching setups (/playbook all to undo)',
   '/backtest — re-run the backtest now (/backtest 180 for 180 days)',
   '/status — last scan, next scan, what is on',
+  '',
+  '<b>Demo account</b> — play money that follows the alerts',
+  '/deposit 20 · /withdraw 5 — add or take out demo cash',
+  '/account — balance, profit, open trades',
+  '/risk 2% or /risk 1 — risk per trade (share of balance, or dollars)',
+  '/history — deposits, withdrawals and trade results',
+  '/whatif 100 30 — what $100 would have made on the last 30 days of alerts',
+  '/resetaccount — empty the demo account and start over',
   '/scan — run a scan now',
   '',
   'Pairs that are off are still scanned and tracked, so learning keeps going — you just do not get the message.',
@@ -75,6 +83,10 @@ class TelegramControl {
           { command: 'insights', description: 'What worked in the last backtest' },
           { command: 'playbook', description: 'Winning combinations per pair' },
           { command: 'backtest', description: 'Re-run the backtest now' },
+          { command: 'account', description: 'Demo account: balance and profit' },
+          { command: 'deposit', description: 'Add demo cash, e.g. /deposit 20' },
+          { command: 'withdraw', description: 'Take out demo cash' },
+          { command: 'whatif', description: 'What $X would have made, e.g. /whatif 100 30' },
           { command: 'status', description: 'Last scan, next scan, what is on' },
           { command: 'scan', description: 'Run a scan now' },
           { command: 'pause', description: 'Stop all alerts' },
@@ -177,6 +189,24 @@ class TelegramControl {
       }
       case '/learning':
         return reply(await this._report('learning'));
+      case '/account':
+      case '/balance':
+        return reply(await this._report('account'));
+      case '/deposit':
+        return reply(await this._report('deposit', args[0]));
+      case '/withdraw':
+        return reply(await this._report('withdraw', args[0]));
+      case '/risk':
+        return reply(await this._report('risk', args[0]));
+      case '/history':
+        return reply(await this._report('history'));
+      case '/whatif':
+        return reply(await this._report('whatif', args[0], args[1], args[2]));
+      case '/resetaccount':
+        if ((args[0] || '').toLowerCase() !== 'confirm') {
+          return reply('This empties the demo account and its record. Send /resetaccount confirm to go ahead.');
+        }
+        return reply(await this._report('resetAccount'));
       case '/insights':
         return reply(await this._report('insights'));
       case '/playbook': {

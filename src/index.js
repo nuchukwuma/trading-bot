@@ -15,6 +15,7 @@ const { loadBacktestTrades } = require('./learn/ledger');
 const { describeAdjust } = require('./learn/planVariants');
 const { BacktestRunner } = require('./backtest/runner');
 const { formatPlaybook } = require('./backtest/insights');
+const paperLib = require('./paper/account');
 const { loadProfile } = require('./learn/profileStore');
 
 const log = createLogger('bot');
@@ -78,9 +79,15 @@ async function main() {
       // Follow every SENT alert to its end and tell the user, replying to the
       // original message. Shadow setups are tracked silently.
       onTradeEvent: async (doc, event) => {
-        if (!doc.delivered || doc.shadow || config.dryRun) return;
-        if (!scanner.alerts.telegram.configured) return;
-        await scanner.alerts.telegram.sendMessage(formatTradeEvent(doc, event), { replyTo: doc.telegramMessageId });
+        if (!doc.delivered || doc.shadow) return;
+        // Settle the demo account first, whether or not Telegram is set up.
+        let extra = null;
+        if (event.type === 'closed' && scanner.paper) {
+          extra = paperLib.resultLine(await scanner.paper.close(String(doc._id), event.outcome));
+        }
+        if (config.dryRun || !scanner.alerts.telegram.configured) return;
+        const text = formatTradeEvent(doc, event) + (extra ? `\n\n${extra}` : '');
+        await scanner.alerts.telegram.sendMessage(text, { replyTo: doc.telegramMessageId });
       },
       onProfileChange: (result) =>
         log.warn(
@@ -142,6 +149,16 @@ async function main() {
   }).load();
   if (scanner.settings.muted.size) log.info(`alerts off for: ${[...scanner.settings.muted].join(', ')}`);
   if (scanner.settings.paused) log.warn('alerts are paused from Telegram — /resume to start again');
+
+  // The demo account follows sent alerts with play money (needs MongoDB to
+  // settle trades and to survive restarts).
+  if (scanner.persist && scanner.learning) {
+    scanner.paper = await new paperLib.PaperAccount({ db }).load();
+    const s = scanner.paper.state;
+    if (scanner.paper.funded) {
+      log.info(`demo account: balance $${s.balance.toFixed(2)}, ${Object.keys(s.open).length} open trade(s)`);
+    }
+  }
 
   let stopping = false;
   let timer = null;
@@ -234,6 +251,7 @@ async function main() {
       getStatus: () => ({ ...status, database: scanner.persist }),
       reports: scanner.persist
         ? {
+            ...(scanner.paper ? paperReports(scanner.paper) : {}),
             trades: async () =>
               formatOpenTrades(await db.openAlerts(), {
                 shadowCount: await db.countTrackedShadows(),
@@ -260,6 +278,63 @@ async function main() {
 
   if (config.scheduler.scanOnStart) await runScan();
   scheduleNext();
+}
+
+/** Telegram handlers for the demo account. */
+function paperReports(paper) {
+  const money = (s) => {
+    const n = Number(String(s || '').replace(/[$,]/g, ''));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  return {
+    account: async () => paperLib.formatAccount(paper, await db.openAlerts()),
+    deposit: async (arg) => {
+      const n = money(arg);
+      if (!n) return 'Say how much, e.g. /deposit 20';
+      const balance = await paper.deposit(n);
+      return (
+        `➕ Deposited $${n.toFixed(2)} demo cash — balance $${balance.toFixed(2)}.\n` +
+        `Every alert sent from now on is taken at ${paperLib.describeRisk(paper.state)}. /account to follow it.`
+      );
+    },
+    withdraw: async (arg) => {
+      const n = money(arg);
+      if (!n) return 'Say how much, e.g. /withdraw 10';
+      try {
+        const balance = await paper.withdraw(n);
+        return `➖ Withdrew $${n.toFixed(2)} — balance $${balance.toFixed(2)}.`;
+      } catch (err) {
+        return `Not withdrawn: ${err.message}.`;
+      }
+    },
+    risk: async (arg) => {
+      if (!arg) {
+        return `Risk is ${paperLib.describeRisk(paper.state)}. Change it with /risk 2% (of the balance) or /risk 1 ($ per trade).`;
+      }
+      const r = paperLib.parseRisk(arg);
+      if (!r) return 'Use /risk 2% for a share of the balance, or /risk 1 for dollars per trade.';
+      try {
+        await paper.setRisk(r.mode, r.value);
+        return `⚙️ Demo risk is now ${paperLib.describeRisk(paper.state)} — next trade risks $${paper.riskPerTrade().toFixed(2)}.`;
+      } catch (err) {
+        return err.message;
+      }
+    },
+    history: async () => paperLib.formatHistory(await db.paperTxns({ limit: 15 })),
+    whatif: async (startArg, daysArg, riskArg) => {
+      const start = money(startArg);
+      if (!start) return 'e.g. /whatif 100 — or /whatif 20 30 2% for $20 over 30 days risking 2% per trade';
+      const days = Math.min(Math.max(parseInt(daysArg, 10) || 30, 1), 365);
+      const risk = paperLib.parseRisk(riskArg) || { mode: paper.state.riskMode, value: paper.state.riskValue };
+      const docs = await db.closedAlerts({ limit: 2000, since: new Date(Date.now() - days * 86400000) });
+      const sim = paperLib.simulateAccount(docs, { start, ...risk });
+      return paperLib.formatWhatIf(sim, { days, ...risk });
+    },
+    resetAccount: async () => {
+      await paper.reset();
+      return '♻️ Demo account reset to empty. /deposit to start again.';
+    },
+  };
 }
 
 /** /learning — how much the bot has seen and what it filters on. */

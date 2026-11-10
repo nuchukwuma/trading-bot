@@ -115,6 +115,11 @@ function formatAlert(alert) {
     lines.push(`<i>✔ ${escapeHtml(alert.edgeProfile.reason)}</i>`);
   }
 
+  if (alert.paperLine) {
+    lines.push('');
+    lines.push(alert.paperLine);
+  }
+
   lines.push('');
   lines.push(`<i>30m candle close ${escapeHtml(formatUtc(candleTime))}</i>`);
   lines.push('<i>Analysis only — this bot places no orders.</i>');
