@@ -8,6 +8,7 @@ const { EdgeProfile } = require('./backtest/edgeProfile');
 const db = require('./db');
 const { createLogger } = require('./util/logger');
 const { formatAlertLine } = require('./alerts/format');
+const { quoteLine } = require('./paper/account');
 
 const log = createLogger('scanner');
 
@@ -44,6 +45,8 @@ class Scanner {
     this.learning = opts.learning || null;
     // Per-pair on/off and pause, set from Telegram (src/control).
     this.settings = opts.settings || null;
+    // The demo account (src/paper/account.js), when MongoDB is connected.
+    this.paper = opts.paper || null;
     // Anything with rate(setup) -> rating; normally the LearningService.
     this.rater = opts.rater || null;
   }
@@ -221,6 +224,7 @@ class Scanner {
     }
 
     // ---- 6. Delivery + logging ----
+    if (this.paper) alert.paperLine = quoteLine(this.paper.quote());
     const delivery = await this.alerts.deliver(alert, now);
 
     let record = null;
@@ -234,6 +238,14 @@ class Scanner {
 
     if (delivery.skipped === 'duplicate') {
       return { instrumentId: instrument.id, fired: false, stage: 'dedup', reason: 'Duplicate of a recent alert', alert, bias, scoring, plan };
+    }
+
+    // The demo account takes what was actually sent (it needs the stored id
+    // to settle the trade when the tracker resolves it).
+    if (this.paper && delivery.sent && record) {
+      await this.paper
+        .open(String(record._id), { instrumentId: instrument.id, side: plan.side })
+        .catch((err) => log.error(`demo account could not take the trade: ${err.message}`));
     }
 
     log.info(formatAlertLine(alert));

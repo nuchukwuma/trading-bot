@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 368 unit tests, no network or database needed
+npm test                 # 382 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -58,6 +58,28 @@ messages from anyone else are ignored.
 | `/playbook` | Each pair's winning combinations (`/playbook EURUSD`, `/playbook only`, `/playbook all`) |
 | `/insights` | The last backtest's report: what worked, what to avoid, what is only promising |
 | `/backtest 365` | Re-run the backtest now over N days (default 365) |
+
+### Demo account
+
+Play money that follows the alerts, to see what they would do to a real $20 or $100 account
+(needs MongoDB):
+
+| Command | What it does |
+| --- | --- |
+| `/deposit 20` · `/withdraw 5` | Add or take out demo cash |
+| `/account` | Balance, equity with open trades, profit and return, win/loss record, deepest drop, open trades |
+| `/risk 2%` · `/risk 1` | Risk per trade: a share of the balance, or dollars (default `RISK_PER_TRADE`, $3) |
+| `/history` | Deposits, withdrawals, trade results and skipped trades |
+| `/whatif 100 30 2%` | What $100 would have made on the last 30 days of sent alerts at 2% risk |
+| `/resetaccount confirm` | Empty the account and start over |
+
+Every alert **sent** while the account has enough free cash is taken at the account's risk; the
+alert says so (📒). When the trade plays out, its result — R x the risk taken — lands on the balance
+and is added to the trade's final update. A setup whose entry never fills costs nothing. Money at
+risk in open trades is set aside, so the account cannot lose more than it holds and cannot
+withdraw it. When there is not enough free cash for the next trade the account sits it out and
+says so; **alerts keep being sent and tracked regardless**, and the account picks up again after
+the next `/deposit`. Results follow each plan exactly as sent and include no spread or commission.
 
 ### Following every alert to the end
 
@@ -517,6 +539,7 @@ src/
   scanner.js   the per-instrument pipeline
   server.js    status/health HTTP server and keep-awake pinger (Render)
   control/     Telegram commands and the per-pair on/off settings
+  paper/       the demo account that follows the alerts with play money
   index.js     scheduler and entry point
 tests/         unit tests per module
 ```

@@ -5,6 +5,7 @@ const config = require('../config');
 const Alert = require('./models/Alert');
 const Setting = require('./models/Setting');
 const BacktestTrade = require('./models/BacktestTrade');
+const PaperTxn = require('./models/PaperTxn');
 const { createLogger } = require('../util/logger');
 
 const log = createLogger('db');
@@ -220,6 +221,16 @@ async function loadBacktestTrades() {
   return docs.map((t) => ({ ...t, source: t.source || 'backtest' }));
 }
 
+async function addPaperTxn(txn) {
+  if (!isConnected()) return null;
+  return PaperTxn.create(txn);
+}
+
+async function paperTxns({ limit = 15 } = {}) {
+  if (!isConnected()) return [];
+  return PaperTxn.find({ type: { $nin: ['open'] } }).sort({ createdAt: -1 }).limit(limit).lean();
+}
+
 async function getSetting(key) {
   const doc = await Setting.findOne({ key }).lean();
   return doc ? doc.value : undefined;
@@ -230,6 +241,8 @@ async function setSetting(key, value) {
 }
 
 module.exports = {
+  addPaperTxn,
+  paperTxns,
   replaceBacktestTrades,
   loadBacktestTrades,
   alertsNeedingVariants,

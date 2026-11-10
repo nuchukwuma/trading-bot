@@ -168,3 +168,36 @@ test('control: /playbook shows the playbook, one pair, or switches playbook-only
   await say('/playbook nope');
   assert.match(sent.at(-1).text, /Not recognised/);
 });
+
+test('control: demo account commands reach their handlers; reset needs confirmation', async () => {
+  const { control, sent, say } = build();
+  const calls = [];
+  const h = (name) => async (...a) => (calls.push([name, ...a]), name.toUpperCase());
+  control.reports = {
+    account: h('account'),
+    deposit: h('deposit'),
+    withdraw: h('withdraw'),
+    risk: h('risk'),
+    history: h('history'),
+    whatif: h('whatif'),
+    resetAccount: h('resetAccount'),
+  };
+  await say('/deposit 20');
+  await say('/withdraw 5');
+  await say('/balance');
+  await say('/risk 2%');
+  await say('/whatif 100 30 1');
+  await say('/history');
+  await say('/resetaccount');
+  assert.match(sent.at(-1).text, /\/resetaccount confirm/);
+  await say('/resetaccount confirm');
+  assert.deepEqual(calls, [
+    ['deposit', '20'],
+    ['withdraw', '5'],
+    ['account'],
+    ['risk', '2%'],
+    ['whatif', '100', '30', '1'],
+    ['history'],
+    ['resetAccount'],
+  ]);
+});
