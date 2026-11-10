@@ -18,7 +18,7 @@ an order** — there is no trade endpoint anywhere in the codebase.
 ```bash
 npm install
 cp .env.example .env     # fill in the credentials below
-npm test                 # 380 unit tests, no network or database needed
+npm test                 # 382 unit tests, no network or database needed
 npm run calibrate        # verify symbols and stop buffers against the live feed
 npm run backtest         # replay history, measure what works, write the alert filter
 npm run scan             # one scan pass, then exit
@@ -236,6 +236,14 @@ lots                     = riskUsd ÷ loss per lot (USD)    [floored to lotStep]
 
 `quoteToUsd` is 1 for USD-quoted instruments (EUR/USD, the volatility indices), `1/price` for
 USD-based pairs (USD/JPY, USD/CAD), and a live or configured cross rate otherwise (GBP/JPY).
+
+### Not chasing a move that already happened
+
+The entry is a limit at the POI edge, which can sit well behind price. A setup is refused when
+price has already covered `MAX_ENTRY_PROGRESS` (default 0.5 = half) of the way from that entry to
+TP1, and always when it is already past TP1. Without this gate, a large share of alerts were for
+moves that were over: the limit never filled and the bot reported the setup invalidated as soon as
+price touched TP1.
 
 ### De-duplication
 

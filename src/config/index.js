@@ -82,6 +82,11 @@ const config = {
   tradePlan: {
     // Hard gate — no alert if TP1 R:R is under this.
     minRiskReward: num(process.env.MIN_RR, 2),
+    // No alert once price has already covered this share of the way from the
+    // entry to TP1: the move has (mostly) happened without the entry, and the
+    // limit would almost never fill — it would just be reported invalidated
+    // when price touches TP1. 1 = only refuse when price is already past TP1.
+    maxEntryProgress: num(process.env.MAX_ENTRY_PROGRESS, 0.5),
     targets: [
       { name: 'TP1', rr: num(process.env.TP1_RR, 2), closePct: 50, moveStopToBreakeven: true },
       { name: 'TP2', rr: num(process.env.TP2_RR, 3.5), closePct: 30, trailToStructure: true },

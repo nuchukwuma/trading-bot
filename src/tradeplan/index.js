@@ -78,6 +78,25 @@ function buildTradePlan(input) {
     );
   }
 
+  // ---- the move must not have happened already ----
+  // The entry is a limit at the POI edge, which can sit well behind price. If
+  // price has already run most of the way to TP1 (or past it), the alert is
+  // for a move that is over: the limit almost never fills and the setup is
+  // reported invalidated as soon as price touches TP1.
+  if (Number.isFinite(input.price) && Number.isFinite(cfg.maxEntryProgress)) {
+    const toTp1 = Math.abs(tp1.price - entryPrice);
+    const covered = (bullish ? input.price - entryPrice : entryPrice - input.price) / toTp1;
+    if (toTp1 > 0 && covered >= cfg.maxEntryProgress) {
+      return reject(
+        'entry',
+        covered >= 1
+          ? 'Price is already past TP1 — the move happened without this entry'
+          : `Price has already covered ${Math.round(covered * 100)}% of the way from the entry to TP1 — the move has mostly happened`,
+        { entryPrice, stopPrice, riskDistance, targets }
+      );
+    }
+  }
+
   // ---- position size ----
   const position = calculatePositionSize({
     instrument,
