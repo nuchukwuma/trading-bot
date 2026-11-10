@@ -398,3 +398,43 @@ test('plan: a stop that would sit on the wrong side of the entry is rejected', (
   assert.equal(plan.gate, 'stop');
   assert.match(plan.reason, /wrong side/);
 });
+
+test('plan: refuses a setup whose move already happened (price at or past TP1)', () => {
+  const base = {
+    instrument: VOL75,
+    direction: 'bullish',
+    entryPrice: 100000,
+    poi: { direction: 'bullish', top: 100100, bottom: 99900 },
+    sweep: { extreme: 99800 },
+  };
+  // risk 350 -> TP1 at 100700. Price already above it.
+  const past = buildTradePlan({ ...base, price: 100750 });
+  assert.equal(past.valid, false);
+  assert.equal(past.gate, 'entry');
+  assert.match(past.reason, /already past TP1/);
+
+  // 60% of the way there: refused at the default 50%.
+  const most = buildTradePlan({ ...base, price: 100420 });
+  assert.equal(most.valid, false);
+  assert.match(most.reason, /60% of the way/);
+
+  // Close to the entry: fine.
+  assert.equal(buildTradePlan({ ...base, price: 100100 }).valid, true);
+  // The cut-off is a setting.
+  assert.equal(buildTradePlan({ ...base, price: 100420, opts: { maxEntryProgress: 1 } }).valid, true);
+  // Without a current price (old callers) nothing changes.
+  assert.equal(buildTradePlan(base).valid, true);
+});
+
+test('plan: a sell is measured the other way', () => {
+  const plan = buildTradePlan({
+    instrument: VOL75,
+    direction: 'bearish',
+    entryPrice: 100000,
+    poi: { direction: 'bearish', top: 100100, bottom: 99900 },
+    sweep: { extreme: 100200 },
+    price: 99250, // TP1 at 99300 -> already past it
+  });
+  assert.equal(plan.valid, false);
+  assert.match(plan.reason, /already past TP1/);
+});
